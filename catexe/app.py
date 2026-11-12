@@ -14,6 +14,7 @@ from .diagnostics import collect_checks
 from .http_client import create_session
 from .modules.geolocation import GeoHypothesis, confidence_text, limitation_text, rank_hypotheses
 from .modules.financial_identifiers import decode_vin, validate_iban
+from .modules.ai_router import AI_PROFILES, configured_model, profile_for
 from .modules.ip_attribution import summarize_ip_sources
 from .modules.menu_registry import KEYW, build_sections
 from .modules.secure_store import SecretStore
@@ -441,16 +442,17 @@ def open_file(path):
 _AI_ASKED = {}
 
 
-def ask_ai(prompt, img_b64=None, on_token=None):
-    """IA 100 % locale (Ollama). Texte : CFG['ollama_text'] · image : CFG['ollama_model']. on_token(txt) reçoit le texte au fil de l'eau."""
+def ask_ai(prompt, img_b64=None, on_token=None, task="text"):
+    """IA 100 % locale routée par tâche ; ``on_token`` reçoit le texte au fil de l'eau."""
     prompt = ai_lang(prompt)
-    want = CFG.get("ollama_model" if img_b64 else "ollama_text") or ("qwen2.5vl:7b" if img_b64 else "qwen2.5:3b")
+    profile = profile_for(task, image=bool(img_b64))
+    want = configured_model(task, CFG, image=bool(img_b64))
     m = ollama_setup(interactive=False, m=want)
     if not m and not _AI_ASKED.get(want):
         _AI_ASKED[want] = True
         m = ollama_setup(interactive=True, m=want)
     if not m:
-        raise RuntimeError("IA locale indisponible : installe Ollama et le modèle (menu Réglages → IA locale)")
+        raise RuntimeError(f"IA locale indisponible : installe Ollama et le profil {profile.label} ({want}) via le menu Réglages → IA locale")
     msg = {"role": "user", "content": prompt}
     if img_b64:
         msg["images"] = [img_b64]
@@ -473,12 +475,12 @@ def ask_ai(prompt, img_b64=None, on_token=None):
     return "".join(out)
 
 
-def ai_print(prompt, title="Analyse IA", img=None):
+def ai_print(prompt, title="Analyse IA", img=None, task="text"):
     from rich.markdown import Markdown
     box_ = lambda t: Panel(Markdown(t) if t else Text(tr("L'IA locale réfléchit…"), style=M), title=f"[{P}]{escape(tr(title))}", border_style=P, box=box.ROUNDED, padding=(1, 2))
     try:
         with Live(box_(""), console=con, refresh_per_second=12, transient=True) as live:
-            t = ask_ai(prompt, img, on_token=lambda x: live.update(box_(x[-6000:])))
+            t = ask_ai(prompt, img, on_token=lambda x: live.update(box_(x[-6000:])), task=task)
     except Exception as e:
         if "IA locale indisponible" in str(e) or isinstance(e, requests.ConnectionError):
             con.print(Panel(tr("L'IA locale n'est pas encore installée : le reste du module marche sans elle.\nPour l'activer : menu Réglages → IA locale (gratuit, tourne sur ton PC)."),
@@ -1425,7 +1427,7 @@ def mod_domain():
                  "ip": {ip: {"heb": (v.get("geo") or {}).get("org"), "ports": (v.get("sh") or {}).get("ports"), "cve": ((v.get("sh") or {}).get("vulns") or [])[:10]} for ip, v in R["ips"].items()},
                  "archives_sensibles": (R.get("wb") or {}).get("sens", [])[:15], "robots": R.get("robots")}
         R["ai"] = ai_print(f"Tu es analyste en cybersécurité (reconnaissance passive). Données collectées sur {t} :\n{json.dumps(brief, ensure_ascii=False, default=str)[:10000]}\n\n"
-                           "Rédige en français un rapport clair pour le propriétaire : 1) résumé en 3 lignes, 2) surface d'attaque, 3) risques classés par priorité expliqués simplement, 4) corrections concrètes (exemples d'enregistrements DNS si utile). Concis, avec des puces.", "Rapport IA")
+                           "Rédige en français un rapport clair pour le propriétaire : 1) résumé en 3 lignes, 2) surface d'attaque, 3) risques classés par priorité expliqués simplement, 4) corrections concrètes (exemples d'enregistrements DNS si utile). Concis, avec des puces.", "Rapport IA", task="cyber")
         if R["ai"]:
             add_report("Domaine", f"Rapport IA {t}", R["ai"])
     f = OUT / f"scan_{t.replace(':', '_')}_{stamp()}.html"
@@ -3267,7 +3269,7 @@ MODEL_SIZE = {"qwen2.5vl:7b": "~6 Go", "qwen2.5vl:3b": "~3 Go", "qwen2.5:3b": "~
 
 def vision_engine():
     """Nom du modèle de vision Ollama prêt, sinon None."""
-    return ollama_setup(interactive=False) or ollama_setup(interactive=True)
+    return ollama_setup(interactive=False, m=configured_model("vision", CFG, image=True)) or ollama_setup(interactive=True, m=configured_model("vision", CFG, image=True))
 
 
 def ask_vision(prompt, b64, json_fmt=True, engine=None):
@@ -5952,7 +5954,7 @@ def learn_exercise(code, topic, level):
                 cor = ask_ai(f"Tu es prof de {name}, bienveillant mais exigeant. Exercice :\n{ex}\n\nCode de l'élève :\n```\n{src[:6000]}\n```\n"
                              + (f"Sortie réelle à l'exécution :\n```\n{out[:2000]}\n```\n" if out else "")
                              + "Corrige en Markdown : 1) verdict (✅ réussi / ⚠ presque / ❌ à revoir), 2) ce qui est bien, 3) les erreurs avec la ligne et pourquoi, "
-                               "4) une version améliorée si utile, 5) une note sur 10. Concis.")
+                               "4) une version améliorée si utile, 5) une note sur 10. Concis.", task="code")
             except Exception as e:
                 con.print(f"[{R}]IA indisponible : {escape(str(e))}")
         if cor:
@@ -5975,7 +5977,7 @@ def learn_chat(code):
         ctx = "\n".join(f"Élève : {a}\nProf : {b[:800]}" for a, b in hist[-4:])
         with con.status(f"[{P}]Le prof réfléchit…"):
             try:
-                t = ask_ai(TEACH + f"Langage étudié : {name}. Réponds à la question de l'élève, avec du code si utile.\n{ctx}\nÉlève : {q}")
+                t = ask_ai(TEACH + f"Langage étudié : {name}. Réponds à la question de l'élève, avec du code si utile.\n{ctx}\nÉlève : {q}", task="code")
             except Exception as e:
                 con.print(f"[{R}]IA indisponible : {escape(str(e))}")
                 continue
@@ -9680,6 +9682,10 @@ def mod_settings():
                  {"label": "📘 Réafficher les tutos", "value": "tuto", "desc": "à la prochaine ouverture de chaque module"},
                  {"label": f"🤖 IA locale (texte) : {CFG.get('ollama_text', 'qwen2.5:3b')}", "value": "ai", "desc": "analyses, cours, rapports"},
                  {"label": f"👀 Vision locale : {CFG.get('ollama_model', 'qwen2.5vl:7b')}", "value": "vis", "desc": "géoloc auto, logos"},
+                 {"label": f"🪶 IA légère : {CFG.get('ollama_light', 'qwen2.5:1.5b')}", "value": "light", "desc": "extraction rapide"},
+                 {"label": f"🔤 IA OCR : {CFG.get('ollama_ocr', 'qwen2.5vl:3b')}", "value": "ocr", "desc": "texte dans les images"},
+                 {"label": f"🛡️ IA cyber : {CFG.get('ollama_cyber', 'qwen2.5:7b')}", "value": "cyber", "desc": "logs et analyse défensive"},
+                 {"label": f"💻 IA code : {CFG.get('ollama_code', 'qwen2.5:7b')}", "value": "code", "desc": "Python, Bash, PowerShell, JS"},
                  {"label": f"✨ Animations : {'oui' if CFG['anim'] else 'non'}", "value": "anim", "desc": "démarrage, transitions"},
                  {"label": f"🔑 Token Discord : {'enregistré' if secret_get('discord_token') else 'aucun'}", "value": "dc", "desc": "Prevname Discord (stockage séparé)"},
                  {"label": "📂 Ouvrir le dossier des résultats", "value": "out", "desc": str(OUT)},
@@ -9721,6 +9727,19 @@ def mod_settings():
                                             {"label": "qwen2.5vl:3b", "value": "qwen2.5vl:3b", "desc": "léger · PC 8 Go de RAM"}], default=CFG.get("ollama_model"))
             if v:
                 CFG["ollama_model"] = v
+        elif c in ("light", "ocr", "cyber", "code"):
+            profile = AI_PROFILES[c]
+            current = CFG.get(profile.config_key, profile.default_model)
+            alternatives = [profile.default_model]
+            if c in ("cyber", "code"):
+                alternatives += ["qwen2.5:3b", "llama3.2:3b"]
+            elif c == "ocr":
+                alternatives += ["qwen2.5vl:7b"]
+            else:
+                alternatives += ["llama3.2:3b", "qwen2.5:3b"]
+            v = select(profile.label, [{"label": model, "value": model, "desc": "modèle local · téléchargement demandé seulement au premier usage"} for model in dict.fromkeys(alternatives)], default=current)
+            if v:
+                CFG[profile.config_key] = v
         elif c == "anim":
             CFG["anim"] = not CFG["anim"]
         elif c == "dc":
