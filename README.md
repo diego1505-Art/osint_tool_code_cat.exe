@@ -15,13 +15,13 @@ Chaque module interroge des services publics. Liste principale :
 - **Entreprises** : BODACC (OpenDataSoft).
 - **Anonymat** : passe par Tor (ports 9050/9150) si Tor est installé ; sinon le module le signale.
 
-Aucune donnée n'est envoyée à l'auteur. Les résultats sont enregistrés localement dans `OUT/`.
+Aucune donnée n'est envoyée à l'auteur. Les résultats sont enregistrés localement dans `resultats/`.
 Les clés API (Hunter, Windy) sont demandées à l'utilisateur et stockées sur sa machine uniquement.
 
 ## Installation
 ```
 py -3.14 -m pip install -r requirements.txt
-py -3.14 osint_tool.py
+py -3.14 main.py
 ```
 Windows : lancez `LANCER.bat`. `CREER_EXE.bat` produit un `.exe` avec PyInstaller.
 
@@ -38,4 +38,19 @@ Les programmes Python compilés (PyInstaller) sont parfois signalés à tort par
 MIT, voir `LICENSE`.
 
 ## Crédits
-Photos des défis : Wikimedia Commons et Unsplash, détail dans `challenges/CREDITS.txt`.
+Les données d’exécution sont enregistrées localement dans `resultats/` et ne sont pas versionnées.
+
+## Structure du projet
+
+```text
+main.py              # point d'entrée
+catexe/app.py        # orchestration de l'application et modules
+catexe/config.py     # configuration locale non versionnée
+catexe/http_client.py# client HTTP partagé
+catexe/__init__.py
+lang/                # traductions intégrées
+resultats/           # rapports locaux, ignorés par Git
+cache/               # cache local, ignoré par Git
+```
+
+Les anciennes données de challenges et les résultats personnels ne font plus partie du dépôt.

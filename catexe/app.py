@@ -9,6 +9,9 @@ import os, sys, re, io, json, ssl, socket, base64, time, math, datetime, webbrow
 import concurrent.futures as cf
 from pathlib import Path
 
+from .config import load_config
+from .http_client import create_session
+
 try:
     import requests
     from rich.console import Console
@@ -58,21 +61,16 @@ try:
 except Exception:
     pass
 
-BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
 OUT = BASE / "resultats"
 OUT.mkdir(exist_ok=True)
 CFG_FILE = BASE / "config.json"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-HTTP = requests.Session()
-HTTP.headers.update({"User-Agent": UA, "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"})
+HTTP = create_session()
 con = Console(highlight=False)
 G, P, Y, R, B, M = "bold #00e5ff", "bold #b388ff", "#ffc861", "bold #ff5c7a", "#7aa2ff", "#7480a8"
 
-CFG = {"anim": True, "discord_token": "", "ollama_model": "qwen2.5vl:7b", "ollama_text": "qwen2.5:3b", "page": 0}
-try:
-    CFG.update(json.loads(CFG_FILE.read_text(encoding="utf-8")))
-except Exception:
-    pass
+CFG = load_config(CFG_FILE)
 REPORT = []
 
 # ============================================================ LANGUES
@@ -4049,88 +4047,6 @@ def mod_planes():
 
 
 # ============================================================ CHALLENGES
-CH_DIR = BASE / "challenges"
-CH_PROG = BASE / "progression.json"
-CH_KEY = b"cat.exe//osint"
-NIV = {"facile": ("🟢", G, "FACILE"), "moyen": ("🟡", Y, "MOYEN"), "difficile": ("🔴", R_STYLE, "DIFFICILE")}
-RANGS = [(0, "Chaton"), (300, "Chat de gouttière"), (1000, "Chat de garde"), (2000, "Agent Cat.exe"), (2900, "Maître Cat.exe 👑")]
-
-
-def ch_norm(s):
-    import unicodedata
-    s = unicodedata.normalize("NFKD", str(s).lower())
-    return re.sub(r"[^a-z0-9]", "", "".join(c for c in s if not unicodedata.combining(c)))
-
-
-def ch_hash(s):
-    return hashlib.sha256(("catexe|" + ch_norm(s)).encode()).hexdigest()
-
-
-def ch_val(v):
-    b = base64.b64decode(v)
-    return json.loads(bytes(c ^ CH_KEY[i % len(CH_KEY)] for i, c in enumerate(b)))
-
-
-def ch_text_ok(ans, rep):
-    n = ch_norm(ans)
-    hs = set(rep.get("h", []))
-    for L in rep.get("l", []):
-        for i in range(0, max(1, len(n) - L + 1)):
-            if hashlib.sha256(("catexe|" + n[i:i + L]).encode()).hexdigest() in hs:
-                return True
-    return False
-
-
-def ch_check(c, ans):
-    rep, t = c["rep"], c["rep"]["type"]
-    if t == "text":
-        return ch_text_ok(ans, rep)
-    if t == "num":
-        v, tol = ch_val(rep["v"])
-        m = re.search(r"-?\d+(?:[.,]\d+)?", ans)
-        return bool(m) and abs(float(m.group(0).replace(",", ".")) - v) <= tol + 1e-9
-    if t == "time":
-        v, tol = ch_val(rep["v"])
-        m = re.search(r"(\d{1,2})\s*[:hH]\s*(\d{2})?", ans)
-        return bool(m) and abs(int(m[1]) * 60 + int(m[2] or 0) - v) <= tol
-    if t == "geo":
-        la, lo, km = ch_val(rep["v"])
-        p = re.search(r"(-?\d{1,3}[.,]\d+)\s*[,; ]\s*(-?\d{1,3}[.,]\d+)", ans)
-        if p:
-            return haversine(la, lo, float(p[1].replace(",", ".")), float(p[2].replace(",", "."))) <= km
-        return ch_text_ok(ans, rep)
-    return False
-
-
-def ch_load():
-    try:
-        return json.loads((CH_DIR / "challenges.json").read_text(encoding="utf-8"))["challenges"]
-    except Exception:
-        return []
-
-
-def ch_prog():
-    try:
-        return json.loads(CH_PROG.read_text(encoding="utf-8"))
-    except Exception:
-        return {"pseudo": "", "resolus": {}, "indices": {}}
-
-
-def ch_save(p):
-    try:
-        CH_PROG.write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def ch_flag(cid, pseudo):
-    return "CATEXE{" + hashlib.sha256(f"{cid}|{ch_norm(pseudo)}|cat.exe".encode()).hexdigest()[:12] + "}"
-
-
-def ch_rang(score):
-    return [r for s, r in RANGS if score >= s][-1]
-
-
 # ============================================================ RÉGLAGES
 
 
@@ -9685,12 +9601,6 @@ Mentions légales d'un site, bas de facture ou de devis, Kbis.
 ### 💡 Astuces
 Un « artisan » créé il y a 2 mois, sans avis et avec une adresse de domiciliation = prudence.""",
 
-"mod_challenges": """### 🎯 À quoi ça sert
-**11 défis OSINT** (facile → difficile) pour t'entraîner. Chaque défi donne un **flag** `CATEXE{...}` à poster sur le Discord.
-### ▶ Étapes
-Choisis un défi → lis l'énoncé → ouvre le fichier joint → utilise les modules de l'outil → *Répondre*.
-### 💡 Astuces
-Bloqué ? *Indice*. Chaque défi a été pensé pour un module précis (métadonnées, décodeur, géoloc…).""",
 
 "mod_maplink": """### 🎯 À quoi ça sert
 Transformer **n'importe quel lien de carte** en coordonnées précises, adresse et liens vers 8 autres cartes.
@@ -9867,7 +9777,6 @@ SECTIONS = [
         ("mod_anon", "🧅 Anonymat", "Tor · changer d'IP · navigateur", "Réduit ce que les sites voient de toi : test d'exposition (IP réelle vs IP via Tor), changement d'IP à la demande (nouveau circuit Tor), ouverture de Tor Browser ou Firefox sur Tor, et tests de fuites WebRTC / DNS.\n\nCe n'est pas l'anonymat total : la connexion à un compte perso te reconnaît quand même."),
     ]),
     ("CAT.EXE", [
-        ("mod_challenges", "🎯 Challenges", "facile · moyen · difficile", "11 challenges OSINT à résoudre avec l'outil. Bonne réponse = flag à poster sur le Discord pour le classement."),
         ("mod_graph", "🧬 Graphe d'enquête", "façon Obsidian · fenêtre", "Une fenêtre à part qui dessine ton enquête en toile : pseudos, comptes, emails, IP, lieux… reliés entre eux.\n\nChaque module que tu lances l'alimente tout seul, en direct. Tu peux ajouter des éléments, les relier, mettre des notes, chercher, filtrer par type et exporter en image.\n\nInspiré d'Obsidian et Maltego."),
         ("mod_autoscan", "⚡ Scan auto", "façon SpiderFoot", "Donne une cible (pseudo, email, domaine, IP, nom…) : l'outil lance toutes les recherches possibles, puis recommence sur ce qu'il trouve, et remplit le graphe tout seul."),
         ("mod_report", "📄 Rapport", "PDF · HTML", "Tout ce que tu as trouvé pendant la session, avec synthèse IA, en PDF (lisible sur iPhone) ou en page web."),
@@ -10094,120 +10003,3 @@ def mod_settings():
             ai_print('Réponds juste : "IA opérationnelle ✓" suivi du nom de ton modèle.', "Test")
             pause()
         save_cfg()
-
-
-def ch_side(C, p):
-    def side(it):
-        c = next((x for x in C if x["id"] == it.get("value")), None)
-        if not c:
-            return Panel(Text(tr(it.get("desc", "")) or " ", style=M), border_style="#2b3158", box=box.ROUNDED)
-        ic, st, lb = NIV[c["niv"]]
-        ok = c["id"] in p["resolus"]
-        used = p["indices"].get(c["id"], 0)
-        txt = Text.from_markup(f"[{st}]{ic} {lb}[/] · [{G}]{c['pts']} pts[/]" + (f" · 📎 {escape(c['fichier'])}" if c.get("fichier") else "") + "\n\n")
-        txt.append(tr(c["enonce"])[:600] + "\n\n", style="#e4e9ff")
-        txt.append_text(Text.from_markup(f"[{G}]✅ Résolu · {p['resolus'][c['id']]} pts[/]" if ok else (f"[{Y}]{used} indice(s) utilisé(s)[/]" if used else f"[{M}]à faire[/]")))
-        return Panel(txt, title=f"[{G}]{escape(tr(c['titre']))}", border_style="#4a3fa0", box=box.ROUNDED, padding=(1, 2), title_align="left")
-    return side
-
-
-def mod_challenges():
-    C = ch_load()
-    if not C:
-        con.print(f"[{R_STYLE}]Dossier « challenges » introuvable à côté de l'outil.")
-        return pause()
-    p = ch_prog()
-    if not p.get("pseudo"):
-        p["pseudo"] = Prompt.ask(f"[{G}]Ton pseudo de joueur (il sert à créer tes flags pour le Discord)").strip() or "anonyme"
-        ch_save(p)
-    last = None
-    while True:
-        con.clear()
-        con.rule(f"[{G}]🎯 CHALLENGES CAT.EXE")
-        score = sum(p["resolus"].values())
-        total = sum(c["pts"] for c in C)
-        con.print(f"  [{P}]{escape(p['pseudo'])}[/] · score [{G}]{score}[/] / {total} · rang [{P}]{ch_rang(score)}[/] · "
-                  f"{len(p['resolus'])}/{len(C)} résolus\n  [{G}]{'█' * int(score / total * 40)}[/][{M}]{'░' * (40 - int(score / total * 40))}[/]\n")
-        items = []
-        for niv in ("facile", "moyen", "difficile"):
-            ic, st, lb = NIV[niv]
-            items.append({"header": f"{ic} {lb}"})
-            for c in (x for x in C if x["niv"] == niv):
-                ok = c["id"] in p["resolus"]
-                items.append({"label": ("✅ " if ok else "⬜ ") + c["titre"] + (" 📎" if c.get("fichier") else ""), "value": c["id"],
-                              "desc": f"{p['resolus'][c['id']]} pts" if ok else f"{c['pts']} pts"})
-        items += [{"header": "──"}, {"label": "📝 Changer de pseudo", "value": "p", "desc": p["pseudo"]},
-                  {"label": "🏅 Vérifier le flag d'un joueur", "value": "v", "desc": "pour les admins du Discord"}, {"label": "← Retour au menu", "value": "back"}]
-        k = select("Challenges", items, default=last, echo=False, side=ch_side(C, p), height=con.size.height - 5)
-        if k in (None, "back"):
-            return
-        last = k
-        if k == "p":
-            p["pseudo"] = Prompt.ask(f"[{G}]Nouveau pseudo").strip() or p["pseudo"]
-            ch_save(p)
-        elif k == "v":
-            who = Prompt.ask(f"[{G}]Pseudo du joueur").strip()
-            fl = Prompt.ask(f"[{G}]Flag posté").strip()
-            hit = next((c for c in C if ch_flag(c["id"], who) == fl), None)
-            con.print(f"[{G}]✅ Flag valide : {escape(who)} a résolu « {escape(hit['titre'])} » ({hit['pts']} pts)" if hit else f"[{R_STYLE}]✗ Flag invalide pour ce pseudo")
-            pause()
-        else:
-            ch_play(next(c for c in C if c["id"] == k), p)
-
-
-def ch_play(c, p):
-    ic, st, lb = NIV[c["niv"]]
-    while True:
-        con.clear()
-        used = p["indices"].get(c["id"], 0)
-        gain = int(c["pts"] * (1 - 0.25 * used))
-        body = f"{escape(c['enonce'])}\n\n[{M}]Réponse attendue :[/] {escape(c['format'])}"
-        if c.get("fichier"):
-            body += f"\n[{M}]Fichier :[/] [{B}]{escape(str(CH_DIR / c['fichier']))}[/]\n[{M}]→ glisse ce fichier dans les modules de l'outil (Métadonnées, Géoloc…)[/]"
-        for i in range(used):
-            body += f"\n[{Y}]💡 Indice {i + 1} :[/] {escape(c['indices'][i])}"
-        con.print(Panel(body, title=f"[{st}]{ic} {lb}[/] · {escape(c['titre'])} · {gain} pts", border_style="#00e5ff", title_align="left"))
-        if c["id"] in p["resolus"]:
-            con.print(f"[{G}]✅ Déjà résolu ({p['resolus'][c['id']]} pts) · flag : {ch_flag(c['id'], p['pseudo'])}")
-        opts = [{"label": "📝 Répondre", "value": "r"}]
-        if c.get("fichier"):
-            opts.append({"label": "📂 Ouvrir le fichier du challenge", "value": "f"})
-        if used < len(c["indices"]):
-            opts.append({"label": f"💡 Indice {used + 1}", "value": "i", "desc": f"le challenge rapportera {int(c['pts'] * (1 - 0.25 * (used + 1)))} pts"})
-        opts.append({"label": "← Retour aux challenges", "value": "back"})
-        a = select("Action", opts, echo=False)
-        if a in (None, "back"):
-            return
-        if a == "f":
-            open_file(CH_DIR / c["fichier"])
-            continue
-        if a == "i":
-            if ask_yes(f"Débloquer l'indice {used + 1} ? (le challenge rapportera {int(c['pts'] * (1 - 0.25 * (used + 1)))} pts)"):
-                p["indices"][c["id"]] = used + 1
-                ch_save(p)
-            continue
-        ans = Prompt.ask(f"[{G}]Ta réponse [{M}](Entrée = annuler)", default="", show_default=False).strip()
-        if not ans:
-            continue
-        if ch_check(c, ans):
-            first = c["id"] not in p["resolus"]
-            if first:
-                p["resolus"][c["id"]] = gain
-                ch_save(p)
-            flag = ch_flag(c["id"], p["pseudo"])
-            if CFG.get("anim", True):
-                typewrite("  >>> BONNE RÉPONSE ! ACCESS GRANTED", G, .02)
-            con.print(Panel(f"[{G}]+{gain} points[/]{'' if first else ' (déjà compté)'}\n\nTon flag : [{P}]{flag}[/]\n"
-                            f"[{M}]Poste-le dans le Discord Cat.exe pour le classement : {DISCORD}[/]", border_style="#00e5ff", title="🏆 Challenge résolu"))
-            add_report("Challenge", c["titre"], f"Résolu · {gain} pts · {flag}")
-            pause()
-            return
-        con.print(f"[{R_STYLE}]✗ Mauvaise réponse, réessaie !")
-        time.sleep(1.4)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        pass

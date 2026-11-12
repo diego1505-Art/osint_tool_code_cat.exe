@@ -18,7 +18,7 @@ if not defined PYEXE (
 )
 echo [CAT.EXE] Preparation (2 a 5 minutes)...
 "%PYEXE%" %PYARGS% -m pip install -q --disable-pip-version-check -r requirements.txt pyinstaller
-"%PYEXE%" %PYARGS% -m PyInstaller --noconfirm --onefile --console --name CatExe-OSINT --collect-all phonenumbers --collect-all pillow_heif --collect-all rich --collect-all fpdf --exclude-module torch --exclude-module torchvision --exclude-module transformers --exclude-module geoclip osint_tool.py
+"%PYEXE%" %PYARGS% -m PyInstaller --noconfirm --onefile --console --name CatExe-OSINT --collect-all phonenumbers --collect-all pillow_heif --collect-all rich --collect-all fpdf --exclude-module torch --exclude-module torchvision --exclude-module transformers --exclude-module geoclip main.py
 if not exist dist\CatExe-OSINT.exe (
   echo Echec de la creation du .exe
   pause
@@ -26,9 +26,7 @@ if not exist dist\CatExe-OSINT.exe (
 )
 if not exist CatExe-OSINT mkdir CatExe-OSINT
 copy /y dist\CatExe-OSINT.exe CatExe-OSINT\ >nul
-xcopy /e /i /y challenges CatExe-OSINT\challenges >nul
 xcopy /e /i /y lang CatExe-OSINT\lang >nul
-copy /y LISEZMOI.txt CatExe-OSINT\ >nul
 rmdir /s /q build dist >nul 2>&1
 del /q CatExe-OSINT.spec >nul 2>&1
 echo.

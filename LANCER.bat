@@ -19,7 +19,7 @@ if not defined PYEXE (
 echo [CAT.EXE] Python : %PYEXE% %PYARGS%
 echo [CAT.EXE] Verification des modules...
 "%PYEXE%" %PYARGS% -m pip install -q --disable-pip-version-check -r requirements.txt
-"%PYEXE%" %PYARGS% osint_tool.py
+"%PYEXE%" %PYARGS% main.py
 pause
 exit /b 0
 
