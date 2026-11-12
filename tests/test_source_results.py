@@ -1,4 +1,4 @@
-from catexe.modules.sources.results import SourceResult, result_from_probe, source_error
+from catexe.modules.sources.results import result_from_probe, source_error
 
 
 def test_probe_statuses_are_distinct():

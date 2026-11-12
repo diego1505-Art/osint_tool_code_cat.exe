@@ -5,7 +5,20 @@ CAT.EXE // OSINT TOOL
 Outil d'audit d'exposition : géoloc photo, pseudos, domaine/IP, dorks, entreprises.
 A utiliser sur tes propres comptes, domaines et photos, ou avec l'accord de la personne concernee.
 """
-import os, sys, re, io, json, ssl, socket, base64, time, math, datetime, webbrowser, random, hashlib
+import os
+import sys
+import re
+import io
+import json
+import ssl
+import socket
+import base64
+import time
+import math
+import datetime
+import webbrowser
+import random
+import hashlib
 import concurrent.futures as cf
 from pathlib import Path
 from .config import load_config
@@ -18,6 +31,7 @@ from .modules.ai_router import AI_PROFILES, configured_model, profile_for
 from .modules.cyber_catalog import categories as cyber_categories, load_catalog, platforms as cyber_platforms, risk_label, search_tools
 from .modules.ip_attribution import summarize_ip_sources
 from .modules.menu_registry import KEYW, build_sections
+from .modules.metadata import cardinal, read_exif
 from .modules.secure_store import SecretStore
 from .modules.sources.results import SourceResult, result_from_probe, source_error
 from .modules.ui import UIContext, ask_num as ui_ask_num, ask_text as ui_ask_text, ask_yes as ui_ask_yes, read_key as ui_read_key, select as ui_select
@@ -375,7 +389,9 @@ def local_server():
     """Petit serveur web local (127.0.0.1) : les pages s'ouvrent en http:// et plus en file://,
     ce qui évite les cartes grises (tuiles refusées sans « Referer ») et les recherches bloquées."""
     if "port" not in _SRV:
-        import http.server, threading, functools
+        import http.server
+        import threading
+        import functools
 
         class H(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *a):
@@ -478,7 +494,10 @@ def ask_ai(prompt, img_b64=None, on_token=None, task="text"):
 
 def ai_print(prompt, title="Analyse IA", img=None, task="text"):
     from rich.markdown import Markdown
-    box_ = lambda t: Panel(Markdown(t) if t else Text(tr("L'IA locale réfléchit…"), style=M), title=f"[{P}]{escape(tr(title))}", border_style=P, box=box.ROUNDED, padding=(1, 2))
+
+    def box_(text):
+        return Panel(Markdown(text) if text else Text(tr("L'IA locale réfléchit…"), style=M), title=f"[{P}]{escape(tr(title))}", border_style=P, box=box.ROUNDED, padding=(1, 2))
+
     try:
         with Live(box_(""), console=con, refresh_per_second=12, transient=True) as live:
             t = ask_ai(prompt, img, on_token=lambda x: live.update(box_(x[-6000:])), task=task)
@@ -530,74 +549,6 @@ def ask_text(q, default=None, password=False):
 
 # ============================================================ 1. GÉOLOC PHOTO
 NOMI = {"User-Agent": "CatExe-OSINT/2.1 (outil d'audit)"}
-
-
-def _dms(v):
-    try:
-        return float(v[0]) + float(v[1]) / 60 + float(v[2]) / 3600
-    except Exception:
-        return None
-
-
-def read_exif(path):
-    """Renvoie (image redressée, infos lisibles, gps (lat, lon) ou None, infos caméra)."""
-    from PIL import ImageOps
-    info, gps, cam = {}, None, {}
-    raw = Image.open(path)
-    ex = raw.getexif()
-    for k, n in {271: "Appareil (marque)", 272: "Modèle", 305: "Logiciel", 270: "Description", 315: "Auteur", 33432: "Copyright",
-                 0x9C9C: "Commentaire", 0x9C9F: "Sujet", 0x9C9D: "Auteur (Windows)", 0x9C9E: "Mots-clés"}.items():
-        v = ex.get(k)
-        if v:
-            if isinstance(v, (bytes, tuple)):
-                try:
-                    v = bytes(v).decode("utf-16-le")
-                except Exception:
-                    v = str(v)
-            info[n] = str(v).strip("\x00 ")
-    try:
-        sub = ex.get_ifd(0x8769)
-        if sub.get(36867):
-            info["Prise le"] = str(sub.get(36867))
-        if sub.get(42036):
-            info["Objectif"] = str(sub.get(42036))
-        uc = sub.get(0x9286)
-        if uc:
-            uc = uc[8:] if isinstance(uc, bytes) and uc[:8] in (b"ASCII\x00\x00\x00", b"UNICODE\x00", b"\x00" * 8) else uc
-            info["Commentaire utilisateur"] = (uc.decode("utf-8", "ignore") if isinstance(uc, bytes) else str(uc)).strip("\x00 ")
-        if sub.get(41989):
-            cam["f35"] = float(sub.get(41989))
-        elif sub.get(37386):
-            info["Focale réelle"] = f"{float(sub.get(37386)):.1f} mm"
-    except Exception:
-        pass
-    try:
-        g = ex.get_ifd(0x8825)
-        if g and 2 in g and 4 in g:
-            lat, lon = _dms(g[2]), _dms(g[4])
-            if lat is not None and lon is not None:
-                lat = -lat if str(g.get(1, "N")).upper().startswith("S") else lat
-                lon = -lon if str(g.get(3, "E")).upper().startswith("W") else lon
-                gps = (lat, lon)
-                if 6 in g:
-                    info["Altitude"] = f"{float(g[6]):.0f} m"
-                if 17 in g:
-                    cam["dir"] = float(g[17]) % 360
-    except Exception:
-        pass
-    img = ImageOps.exif_transpose(raw)
-    info["Taille"] = f"{img.width}×{img.height}"
-    if cam.get("f35"):
-        side = 36 if img.width >= img.height else 24
-        cam["hfov"] = round(math.degrees(2 * math.atan(side / (2 * cam["f35"]))), 1)
-        info["Focale éq. 35 mm"] = f"{cam['f35']:.0f} mm · champ ≈ {cam['hfov']}°"
-    if cam.get("dir") is not None:
-        info["Direction de visée"] = f"{cam['dir']:.0f}° ({cardinal(cam['dir'])})"
-    return img, info, gps, cam
-
-
-def cardinal(deg):
-    return ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"][int((deg % 360 + 22.5) // 45) % 8]
 
 
 def img_b64(img, maxs=1280):
@@ -1140,8 +1091,8 @@ def scan_domain(d, R):
         t = get(f"https://api.hackertarget.com/hostsearch/?q={d}", 25).text
         if "error" in t.lower() or "API count" in t:
             raise RuntimeError
-        for l in t.splitlines():
-            p = l.split(",")
+        for line in t.splitlines():
+            p = line.split(",")
             if p[0]:
                 add(p[0], p[1] if len(p) > 1 else None)
         return "HackerTarget"
@@ -1246,7 +1197,10 @@ def scan_ip(ip, R):
 
 def analyse(R):
     F = []
-    a = lambda s, t: F.append((s, t))
+
+    def a(severity, text):
+        F.append((severity, text))
+
     d = R["target"]
     if not R["ip"]:
         spf = R.get("spf")
@@ -3046,7 +3000,10 @@ def mod_link():
     if not re.match(r"https?://", url):
         url = "http://" + url
     F = []
-    a = lambda s, t: F.append((s, t))
+
+    def a(severity, text):
+        F.append((severity, text))
+
     chain = []
     try:
         r = HTTP.get(url, timeout=15, allow_redirects=True)
@@ -3899,10 +3856,10 @@ BOOT_LINES = ["[{t}] cat.exe kernel {v} · build 0x{h}", "[{t}] montage du syst�
 def anim_bootlog(sec=.9):
     """Défilement façon noyau / hacker, rapide."""
     t0 = time.time()
-    n = sum(len(l) for _, l in SECTIONS) if "SECTIONS" in globals() else 40
-    for i, l in enumerate(BOOT_LINES):
+    n = sum(len(section_items) for _, section_items in SECTIONS) if "SECTIONS" in globals() else 40
+    for i, template in enumerate(BOOT_LINES):
         el = time.time() - t0
-        line = l.format(t=f"{el + random.random() * .01:9.6f}", v=VERSION, h=secrets_hex(4), h2=secrets_hex(8), n=n)
+        line = template.format(t=f"{el + random.random() * .01:9.6f}", v=VERSION, h=secrets_hex(4), h2=secrets_hex(8), n=n)
         hexd = " ".join(secrets_hex(2) for _ in range(6))
         con.print(Text.assemble(("  " + line, "#7480a8" if i % 3 else "#00e5ff"), ("   " + hexd, "#2a2266")))
         time.sleep(sec / len(BOOT_LINES))
