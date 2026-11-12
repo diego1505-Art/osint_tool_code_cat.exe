@@ -10,6 +10,7 @@ import concurrent.futures as cf
 from pathlib import Path
 
 from .config import load_config
+from .diagnostics import collect_checks
 from .http_client import create_session
 
 try:
@@ -4288,6 +4289,28 @@ def boot():
         con.print()
         typewrite("  >>> ACCESS GRANTED", G, .03)
         time.sleep(.45)
+
+
+def mod_diagnostics():
+    """Affiche un état local reproductible sans contacter de service externe."""
+    con.rule(f"[{G}]🧪 DIAGNOSTIC SYSTÈME")
+    con.print(f"[{M}]Vérification locale : aucune donnée n'est envoyée.[/]")
+    checks = collect_checks(BASE)
+    table = Table(show_header=True, header_style=f"bold {G}", box=box.SIMPLE)
+    table.add_column("Élément")
+    table.add_column("Statut", justify="center")
+    table.add_column("Détail")
+    for check in checks:
+        color = G if check.status == "OK" else (R if check.status == "KO" else Y)
+        table.add_row(check.name, f"[{color}]{check.status}[/]", check.detail)
+    con.print(table)
+    con.print()
+    for category, label in (("required", "Obligatoire"), ("optional", "Optionnel"), ("ai", "IA locale"), ("ffmpeg", "FFmpeg"), ("browser", "Navigateur")):
+        present = ", ".join(c.name for c in checks if c.category == category and c.status == "OK") or "aucun"
+        missing = ", ".join(c.name for c in checks if c.category == category and c.status != "OK")
+        suffix = f" · absents : {missing}" if missing else ""
+        con.print(f"[{P}]{label}[/] : {present}{suffix}")
+    pause()
 
 
 # ============================================================ NOUVEAUX MODULES v4
@@ -9777,6 +9800,7 @@ SECTIONS = [
         ("mod_anon", "🧅 Anonymat", "Tor · changer d'IP · navigateur", "Réduit ce que les sites voient de toi : test d'exposition (IP réelle vs IP via Tor), changement d'IP à la demande (nouveau circuit Tor), ouverture de Tor Browser ou Firefox sur Tor, et tests de fuites WebRTC / DNS.\n\nCe n'est pas l'anonymat total : la connexion à un compte perso te reconnaît quand même."),
     ]),
     ("CAT.EXE", [
+        ("mod_diagnostics", "🧪 Diagnostic système", "Python · dépendances · outils", "Vérifie localement Python, les modules, Ollama, FFmpeg et Playwright sans envoyer de données."),
         ("mod_graph", "🧬 Graphe d'enquête", "façon Obsidian · fenêtre", "Une fenêtre à part qui dessine ton enquête en toile : pseudos, comptes, emails, IP, lieux… reliés entre eux.\n\nChaque module que tu lances l'alimente tout seul, en direct. Tu peux ajouter des éléments, les relier, mettre des notes, chercher, filtrer par type et exporter en image.\n\nInspiré d'Obsidian et Maltego."),
         ("mod_autoscan", "⚡ Scan auto", "façon SpiderFoot", "Donne une cible (pseudo, email, domaine, IP, nom…) : l'outil lance toutes les recherches possibles, puis recommence sur ce qu'il trouve, et remplit le graphe tout seul."),
         ("mod_report", "📄 Rapport", "PDF · HTML", "Tout ce que tu as trouvé pendant la session, avec synthèse IA, en PDF (lisible sur iPhone) ou en page web."),
@@ -9791,7 +9815,7 @@ KEYW = {"mod_bodacc": "bodacc entreprise liquidation dirigeant societe annonce l
         "mod_img2gps": "gps coordonnees image photo exif geoclip", "mod_person": "nom prenom email linkedin", "mod_discord": "invite serveur snowflake",
         "mod_toolbox": "stegano strings cidr timestamp offline", "mod_pwned": "password mdp pwned hibp", "mod_ids": "snowflake timestamp tiktok date", "mod_video": "film mp4 frames", "mod_geo": "geoint gps localisation",
         "mod_headers": "mail phishing spf dkim", "mod_decode": "base64 cyberchef ctf", "mod_hash": "md5 sha256 virus malware", "mod_net": "ip asn mac whois",
-        "mod_learn": "dev code programmer python cours apprendre javascript", "mod_archive": "wayback", "mod_satellite": "esri imagery historique"}
+        "mod_learn": "dev code programmer python cours apprendre javascript", "mod_archive": "wayback", "mod_satellite": "esri imagery historique", "mod_diagnostics": "diagnostic système dépendances python rich pillow heic ollama ffmpeg playwright"}
 
 
 def main_items():

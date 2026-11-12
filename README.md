@@ -23,6 +23,19 @@ Les clés API (Hunter, Windy) sont demandées à l'utilisateur et stockées sur 
 py -3.11 -m pip install -r requirements.txt
 py -3.11 main.py
 ```
+
+### Diagnostic système
+
+Depuis la racine du dépôt, le diagnostic local vérifie Python, les dépendances,
+Ollama, FFmpeg et Playwright sans envoyer de données :
+
+```bash
+python -m catexe --diagnostic
+python -m catexe --diagnostic --json
+```
+
+Le même contrôle est disponible dans le menu **CAT.EXE → Diagnostic système**.
+
 Windows : lancez `LANCER.bat`. `CREER_EXE.bat` produit un `.exe` avec PyInstaller.
 
 ## Vérifier le fichier
