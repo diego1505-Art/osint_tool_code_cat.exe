@@ -19,6 +19,7 @@ resultats/*
 cache/*
 !cache/.gitkeep
 config.json
+secrets.json
 
 # Logs and temporary files
 *.log

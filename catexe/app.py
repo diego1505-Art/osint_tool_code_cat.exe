@@ -16,6 +16,7 @@ from .modules.geolocation import GeoHypothesis, confidence_text, limitation_text
 from .modules.financial_identifiers import decode_vin, validate_iban
 from .modules.ip_attribution import summarize_ip_sources
 from .modules.menu_registry import KEYW, build_sections
+from .modules.secure_store import SecretStore
 from .modules.sources.results import SourceResult, result_from_probe, source_error
 from .modules.ui import UIContext, ask_num as ui_ask_num, ask_text as ui_ask_text, ask_yes as ui_ask_yes, read_key as ui_read_key, select as ui_select
 
@@ -78,7 +79,28 @@ con = Console(highlight=False)
 G, P, Y, R, B, M = "bold #00e5ff", "bold #b388ff", "#ffc861", "bold #ff5c7a", "#7aa2ff", "#7480a8"
 
 CFG = load_config(CFG_FILE)
+SECRETS_FILE = BASE / "secrets.json"
+SECRETS = SecretStore(SECRETS_FILE)
+_legacy_secret_keys = dict(CFG.get("keys") or {})
+_migrated_secrets = SECRETS.migrate(CFG, ("discord_token",))
+for _key_name, _key_value in _legacy_secret_keys.items():
+    if _key_value and not SECRETS.get("api_" + _key_name):
+        SECRETS.set("api_" + _key_name, str(_key_value))
+        _migrated_secrets = True
+if _legacy_secret_keys:
+    CFG.pop("keys", None)
+    _migrated_secrets = True
+if _migrated_secrets:
+    CFG_FILE.write_text(json.dumps(CFG, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    try:
+        os.chmod(CFG_FILE, 0o600)
+    except OSError:
+        pass
 REPORT = []
+
+
+def secret_get(name, default=""):
+    return SECRETS.get(name, default)
 
 # ============================================================ LANGUES
 LANGS = [("fr", "Français"), ("en", "English"), ("es", "Español"), ("de", "Deutsch"), ("it", "Italiano"), ("pt", "Português"), ("nl", "Nederlands"),
@@ -334,8 +356,10 @@ def get_json(url, timeout=12, **kw):
 
 
 def add_report(mod, title, text):
-    REPORT.append({"mod": mod, "title": title, "text": text, "t": datetime.datetime.now().strftime("%d/%m/%Y %H:%M")})
-    graph_feed(mod, title, text)
+    safe_title = SECRETS.redact(title)
+    safe_text = SECRETS.redact(text)
+    REPORT.append({"mod": mod, "title": safe_title, "text": safe_text, "t": datetime.datetime.now().strftime("%d/%m/%Y %H:%M")})
+    graph_feed(mod, safe_title, safe_text)
 
 
 def pause():
@@ -1637,8 +1661,9 @@ def pn_github(q):
 def pn_discord(q):
     created = snowflake_date(q)
     name, note = None, ""
-    if CFG.get("discord_token"):
-        r = get(f"https://discord.com/api/v10/users/{q}", 10, headers={"Authorization": "Bot " + CFG["discord_token"]})
+    discord_token = secret_get("discord_token")
+    if discord_token:
+        r = get(f"https://discord.com/api/v10/users/{q}", 10, headers={"Authorization": "Bot " + discord_token})
         if r.ok:
             j = r.json()
             name = j.get("username") + (f" (affiché : {j['global_name']})" if j.get("global_name") else "")
@@ -6980,10 +7005,11 @@ def mod_discord():
             d = snow_dt(re.sub(r"\D", "", q))
             con.print(kv([("Créé le", fdt(d)), ("Il y a", human_age(d)), ("Worker / process", f"{(int(q) >> 17) & 31} / {(int(q) >> 12) & 31}")], f"🆔 {q}", G))
         elif c == "user":
-            if not CFG.get("discord_token"):
+            discord_token = secret_get("discord_token")
+            if not discord_token:
                 log("Ajoute un token de bot Discord dans Réglages.", Y)
             else:
-                j = get_json(f"https://discord.com/api/v10/users/{q}", 10, headers={"Authorization": "Bot " + CFG["discord_token"]})
+                j = get_json(f"https://discord.com/api/v10/users/{q}", 10, headers={"Authorization": "Bot " + discord_token})
                 con.print(kv([("Pseudo", j.get("username")), ("Nom affiché", j.get("global_name")), ("Bot", j.get("bot")), ("Créé le", fdt(snow_dt(q))),
                               ("Avatar", f"https://cdn.discordapp.com/avatars/{q}/{j['avatar']}.png?size=1024" if j.get("avatar") else None),
                               ("Bannière", f"https://cdn.discordapp.com/banners/{q}/{j['banner']}.png?size=1024" if j.get("banner") else None),
@@ -8307,12 +8333,13 @@ from urllib.parse import quote as _q
 
 def api_key(name, where):
     """Clé API optionnelle, demandée une fois puis gardée dans les réglages (Entrée = sans clé)."""
-    keys = CFG.setdefault("keys", {})
-    if keys.get(name) is None:
+    key_name = "api_" + name
+    key = secret_get(key_name)
+    if not SECRETS.has(key_name):
         con.print(f"[{M}]Clé {name} (gratuite, facultative) : {where}  ·  Entrée = continuer sans clé")
-        keys[name] = ask_text(f"Clé {name}").strip()
-        save_cfg()
-    return keys.get(name) or ""
+        key = ask_text(f"Clé {name}").strip()
+        SECRETS.set(key_name, key)
+    return key
 
 
 def open_links(links, ask=True):
@@ -9654,7 +9681,7 @@ def mod_settings():
                  {"label": f"🤖 IA locale (texte) : {CFG.get('ollama_text', 'qwen2.5:3b')}", "value": "ai", "desc": "analyses, cours, rapports"},
                  {"label": f"👀 Vision locale : {CFG.get('ollama_model', 'qwen2.5vl:7b')}", "value": "vis", "desc": "géoloc auto, logos"},
                  {"label": f"✨ Animations : {'oui' if CFG['anim'] else 'non'}", "value": "anim", "desc": "démarrage, transitions"},
-                 {"label": f"🔑 Token Discord : {'enregistré' if CFG['discord_token'] else 'aucun'}", "value": "dc", "desc": "Prevname Discord (optionnel)"},
+                 {"label": f"🔑 Token Discord : {'enregistré' if secret_get('discord_token') else 'aucun'}", "value": "dc", "desc": "Prevname Discord (stockage séparé)"},
                  {"label": "📂 Ouvrir le dossier des résultats", "value": "out", "desc": str(OUT)},
                  {"label": "🧪 Tester l'IA", "value": "test", "desc": ""},
                  {"label": "← Retour au menu", "value": None}]
@@ -9698,7 +9725,10 @@ def mod_settings():
             CFG["anim"] = not CFG["anim"]
         elif c == "dc":
             k = Prompt.ask(f"[{G}]Token de bot Discord (Entrée = garder, « x » = effacer)", default="", show_default=False, password=True)
-            CFG["discord_token"] = "" if k == "x" else (k.strip() or CFG["discord_token"])
+            if k == "x":
+                SECRETS.delete("discord_token")
+            elif k.strip():
+                SECRETS.set("discord_token", k.strip())
         elif c == "out":
             open_file(OUT)
         elif c == "test":

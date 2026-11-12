@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "anim": True,
-    "discord_token": "",
     "ollama_model": "qwen2.5vl:7b",
     "ollama_text": "qwen2.5:3b",
     "page": 0,
@@ -36,3 +36,7 @@ def load_config(path: Path) -> dict[str, Any]:
 def save_config(path: Path, config: dict[str, Any]) -> None:
     """Écrit la configuration locale de manière lisible."""
     path.write_text(json.dumps(config, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
