@@ -12,6 +12,8 @@ from .config import load_config
 from .core_utils import clean_path, haversine, parse_json, stamp
 from .diagnostics import collect_checks
 from .http_client import create_session
+from .modules.menu_registry import KEYW, build_sections
+from .modules.ui import UIContext, ask_num as ui_ask_num, ask_text as ui_ask_text, ask_yes as ui_ask_yes, read_key as ui_read_key, select as ui_select
 
 try:
     import requests
@@ -461,260 +463,38 @@ def ai_print(prompt, title="Analyse IA", img=None):
 
 
 # ============================================================ MENUS AUX FLÈCHES
-# ↑↓ pour se déplacer, Entrée pour valider, Échap pour revenir, taper des lettres pour filtrer.
-# Si le terminal ne gère pas les touches (sortie redirigée…), repli automatique sur une liste numérotée.
+# Les implémentations vivent dans catexe.modules.ui ; ces façades préservent
+# les signatures historiques utilisées par les modules existants.
 ARROWS = sys.stdin.isatty() and sys.stdout.isatty() and not os.environ.get("CATEXE_NOARROW")
 SEL_STYLE = "bold #050816 on #00e5ff"
+_UI = UIContext(
+    con=con,
+    tr=tr,
+    escape=escape,
+    colors={"G": G, "P": P, "Y": Y, "M": M},
+    arrows=ARROWS,
+    sel_style=SEL_STYLE,
+)
 
 
 def read_key():
-    """Lit une touche : 'up', 'down', 'left', 'right', 'home', 'end', 'pgup', 'pgdn', 'enter', 'esc', 'backspace', 'tab', 'ctrlc' ou le caractère tapé."""
-    if os.name == "nt":
-        import msvcrt
-        c = msvcrt.getwch()
-        if c in ("\x00", "\xe0"):
-            return {"H": "up", "P": "down", "K": "left", "M": "right", "G": "home", "O": "end", "I": "pgup", "Q": "pgdn", "S": "del"}.get(msvcrt.getwch(), "")
-        return {"\r": "enter", "\n": "enter", "\x1b": "esc", "\x08": "backspace", "\t": "tab", "\x03": "ctrlc"}.get(c, c)
-    import termios, tty, select as _sel
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        b = os.read(fd, 1)
-        if b == b"\x1b":
-            seq = b""
-            while len(seq) < 6 and _sel.select([fd], [], [], 0.05)[0]:
-                seq += os.read(fd, 1)
-                if len(seq) >= 2 and (seq[-1:].isalpha() or seq[-1:] == b"~"):
-                    break
-            return {b"[A": "up", b"[B": "down", b"[C": "right", b"[D": "left", b"OA": "up", b"OB": "down", b"OC": "right", b"OD": "left",
-                    b"[H": "home", b"[F": "end", b"OH": "home", b"OF": "end", b"[1~": "home", b"[4~": "end", b"[5~": "pgup", b"[6~": "pgdn",
-                    b"[3~": "del"}.get(seq, "esc" if not seq else "")
-        if b and b[0] >= 0xC0:
-            b += os.read(fd, 1 if b[0] < 0xE0 else 2 if b[0] < 0xF0 else 3)
-        c = b.decode("utf-8", "ignore")
-        return {"\r": "enter", "\n": "enter", "\x7f": "backspace", "\x08": "backspace", "\t": "tab", "\x03": "ctrlc", "\x04": "esc"}.get(c, c)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-
-def _plain(s):
-    import unicodedata
-    return "".join(c for c in unicodedata.normalize("NFD", tr(str(s))) if unicodedata.category(c) != "Mn").lower()
-
-
-def _pad(s, w):
-    from rich.cells import cell_len
-    return s + " " * max(0, w - cell_len(s))
+    return ui_read_key()
 
 
 def select(title, items, default=None, back=True, side=None, height=None, echo=True, hint=None, side_min=96, paged=False, keys=()):
-    """Menu à flèches. items = chaînes ou dicts {label, desc, value, header, style, tags}.
-    Renvoie la « value » de l'élément choisi (ou son index), None si Échap / retour."""
-    from rich.console import Group
-    from rich.cells import cell_len
-    items = [{"label": it} if isinstance(it, str) else dict(it) for it in items]
-    pick = [i for i, it in enumerate(items) if not it.get("header")]
-    if not pick:
-        return None
-    val = lambda i: items[i].get("value", i)
-    cur = next((i for i in pick if default is not None and (val(i) == default or (isinstance(default, int) and i == default and "value" not in items[i]))), pick[0])
-    if not ARROWS:
-        return _select_plain(title, items, pick, cur, back, val)
-    filt = ""
-    groups = []
-    if paged:
-        for i, it in enumerate(items):
-            if it.get("header"):
-                groups.append((it["header"].strip("─ "), []))
-            elif groups:
-                groups[-1][1].append(i)
-            else:
-                groups.append(("", [i]))
-        groups = [g for g in groups if g[1]]
-        paged = len(groups) > 1
-    pg = next((k for k, g in enumerate(groups) if cur in g[1]), 0) if paged else 0
-    LW = min(46, max(cell_len(tr(items[i]["label"])) for i in pick) + 2)
-
-    def visible():
-        if not filt:
-            return list(groups[pg][1]) if paged else list(range(len(items)))
-        f = _plain(filt)
-        hit = [i for i in pick if f in _plain(" ".join(str(items[i].get(k, "")) for k in ("label", "desc", "tags", "section")))]
-        return sorted(hit, key=lambda i: (f not in _plain(items[i]["label"]), not _plain(items[i]["label"]).lstrip(" ←").split(" ", 1)[-1].startswith(f)))
-
-    def render():
-        V = visible()
-        use_side = side is not None and con.width >= side_min
-        H = (height or con.size.height) - 4 - (1 if filt else 0)
-        n = max(4, H)
-        sel_rows = [i for i in V if not items[i].get("header")]
-        pos = V.index(cur) if cur in V else 0
-        start = max(0, min(pos - n // 2, len(V) - n))
-        lst = Table.grid(padding=(0, 1))
-        lst.add_column(width=1)
-        lst.add_column(no_wrap=True)
-        if not use_side:
-            lst.add_column(no_wrap=True, overflow="ellipsis")
-        lst.add_row("", Text("▲ …", style=M) if start > 0 else "", *([""] if not use_side else []))
-        for i in V[start:start + n]:
-            it = items[i]
-            if it.get("header"):
-                lst.add_row("", Text(tr(it["header"]), style=f"bold {P.split()[-1]}"), *([""] if not use_side else []))
-                continue
-            s = i == cur
-            lab = Text(" " + _pad(tr(it["label"]), LW - 2) + " ", style=SEL_STYLE if s else it.get("style", "#e4e9ff"))
-            row = [Text("❯" if s else " ", style=G), lab]
-            if not use_side:
-                row.append(Text(tr(it.get("desc", "")), style="#00e5ff" if s else M))
-            lst.add_row(*row)
-        lst.add_row("", Text("▼ …", style=M) if start + n < len(V) else "", *([""] if not use_side else []))
-        head = Text.assemble((" " + tr(title) + " ", f"bold #050816 on {'#b388ff'}"), "  ",
-                             (f"{sel_rows.index(cur) + 1 if cur in sel_rows else 0}/{len(sel_rows)}", M))
-        parts = [head]
-        if paged and not filt:
-            tabs = Text(" ")
-            for k, (nm, _) in enumerate(groups):
-                tabs.append(f" {nm} ", style=f"bold #050816 on {G.split()[-1]}" if k == pg else "#7480a8 on #14173a")
-                tabs.append(" ")
-            tabs.append(f"  {pg + 1}/{len(groups)}", style=M)
-            parts.append(tabs)
-        if filt:
-            parts.append(Text.assemble(("  🔎 ", Y), (filt, "bold #ffc861"), ("▏", "blink #ffc861"), (f"   {len(sel_rows)} " + tr("résultat(s)") if sel_rows else "   " + tr("aucun résultat"), M)))
-        if use_side:
-            g = Table.grid(padding=(0, 2))
-            g.add_column(no_wrap=True)
-            g.add_column(ratio=1)
-            g.add_row(lst, side(items[cur]) if cur in V else "")
-            parts.append(g)
-        else:
-            parts.append(lst)
-        foot = (tr("n / → page suivante · p / ← précédente · ") if paged and not filt else "") + tr(hint or "↑↓ naviguer · Entrée valider · tape pour filtrer") + ("" if not back else " · " + tr("Échap retour"))
-        parts.append(Text(" " + foot, style=M))
-        return Group(*parts)
-
-    res = None
-    with Live(render(), console=con, auto_refresh=False, transient=True, redirect_stdout=False, redirect_stderr=False) as live:
-        while True:
-            k = read_key()
-            if k == "ctrlc":
-                raise KeyboardInterrupt
-            V = [i for i in visible() if not items[i].get("header")]
-            if paged and not filt and k in ("n", "N", "right", "tab", "p", "P", "left") or (paged and not filt and k.isdigit() and 0 < int(k) <= len(groups)):
-                pg = int(k) - 1 if k.isdigit() else (pg + (1 if k in ("n", "N", "right", "tab") else -1)) % len(groups)
-                cur = groups[pg][1][0]
-                live.update(render(), refresh=True)
-                continue
-            if k in ("up", "down", "pgup", "pgdn", "home", "end") and V:
-                p = V.index(cur) if cur in V else 0
-                if k == "home":
-                    p = 0
-                elif k == "end":
-                    p = len(V) - 1
-                elif k in ("up", "down"):
-                    p = (p + (1 if k == "down" else -1)) % len(V)
-                else:
-                    p = max(0, min(len(V) - 1, p + (8 if k == "pgdn" else -8)))
-                cur = V[p]
-            elif k == "enter" or (k == "right" and not paged):
-                if cur in V:
-                    res = cur
-                    break
-            elif k == "esc" or (k == "left" and not filt):
-                if filt:
-                    filt = ""
-                    if paged:
-                        pg = next((k for k, g in enumerate(groups) if cur in g[1]), pg)
-                elif back:
-                    break
-            elif k == "backspace":
-                filt = filt[:-1]
-                k = "refilter"
-            elif k in keys and not filt and cur in V:
-                res = ("__key__", k, cur)
-                break
-            elif len(k) == 1 and k.isprintable():
-                filt += k
-                k = "refilter"
-            V = [i for i in visible() if not items[i].get("header")]
-            if V and (cur not in V or (k == "refilter" and filt)):
-                cur = V[0]
-            live.update(render(), refresh=True)
-    if res is None:
-        return None
-    if isinstance(res, tuple):
-        return {"key": res[1], "value": val(res[2])}
-    if echo:
-        con.print(f"[{M}]{escape(tr(title))} ›[/] [{G}]{escape(tr(items[res]['label']))}")
-    return val(res)
-
-
-def _select_plain(title, items, pick, cur, back, val):
-    con.print(f"[{P}]{escape(tr(title))}")
-    num = {}
-    for i, it in enumerate(items):
-        if it.get("header"):
-            con.print(f"  [{P}]{escape(tr(it['header']))}")
-            continue
-        num[str(len(num) + 1)] = i
-        con.print(f"  [{G}]{len(num):>2}[/] {escape(tr(it['label']))}" + (f" [{M}]{escape(tr(it.get('desc', '')))}" if it.get("desc") else ""))
-    dflt = next((k for k, i in num.items() if i == cur), "1")
-    k = Prompt.ask(f"[{G}]›[/]", default="" if back else dflt, show_default=not back).strip()
-    if not k:
-        return None if back else val(cur)
-    return val(num[k]) if k in num else (None if back else val(cur))
+    return ui_select(_UI, title, items, default, back, side, height, echo, hint, side_min, paged, keys)
 
 
 def ask_yes(q, default=False):
-    """Question oui / non : ←→ ou ↑↓ pour choisir, Entrée pour valider (o / n marchent aussi)."""
-    if not ARROWS:
-        yn = "o/n" if LANG["code"] == "fr" else "y/n"
-        r = Prompt.ask(f"[{P}]{q}[/] [{M}]({yn})[/]", default="o" if default else "n", show_default=False).strip().lower()
-        return r[:1] in ("o", "y", "s", "j", "д", "e", "t")
-    v = default
-    oui, non = tr("Oui"), tr("Non")
-
-    def lab():
-        return Text.assemble(("? ", "bold #b388ff"), (tr(q), "bold #e4e9ff"), "  ",
-                             (f" {oui} ", SEL_STYLE if v else "#7480a8"), " ", (f" {non} ", "bold #ffffff on #b388ff" if not v else "#7480a8"),
-                             ("   ←→ " + tr("choisir") + " · Entrée", M))
-    with Live(lab(), console=con, auto_refresh=False, transient=True, redirect_stdout=False, redirect_stderr=False) as live:
-        while True:
-            k = read_key()
-            if k == "ctrlc":
-                raise KeyboardInterrupt
-            if k in ("left", "right", "up", "down", "tab"):
-                v = not v
-            elif k == "enter":
-                break
-            elif k == "esc":
-                v = False
-                break
-            elif k.lower() in ("o", "y", "j", "s", "д"):
-                v = True
-                break
-            elif k.lower() == "n":
-                v = False
-                break
-            live.update(lab(), refresh=True)
-    con.print(f"[{P}]?[/] {escape(tr(q))} [{G if v else R}]{oui if v else non}")
-    return v
+    return ui_ask_yes(_UI, q, default, LANG["code"])
 
 
 def ask_num(q, default="0"):
-    """Saisie d'un nombre : Entrée = valeur par défaut, accepte la virgule, redemande si ce n'est pas un nombre."""
-    while True:
-        v = Prompt.ask(q, default=str(default)).strip().replace(",", ".").replace(" ", "")
-        v = re.sub(r"[^\d.\-]+$", "", v) or str(default)
-        try:
-            return float(v)
-        except ValueError:
-            con.print(f"[{Y}]Tape un nombre (ex : {default}).")
+    return ui_ask_num(_UI, q, default)
 
 
 def ask_text(q, default=None, password=False):
-    """Saisie de texte libre (garde l'historique du terminal)."""
-    return Prompt.ask(f"[{G}]›[/] [bold #e4e9ff]{q}[/]", default=default if default is not None else "", show_default=bool(default), password=password)
+    return ui_ask_text(_UI, q, default, password)
 
 
 # ============================================================ 1. GÉOLOC PHOTO
@@ -9699,93 +9479,7 @@ def tuto_gate(fn, name):
     return c == "go"
 
 
-SECTIONS = [
-    ("RECON IDENTITÉ", [
-        ("mod_social", "👥 Lookup réseaux sociaux", "17 plateformes · fiches", "Fiche détaillée d'un pseudo sur GitHub (emails des commits, clés SSH), Reddit (heures d'activité → fuseau), TikTok, Instagram, YouTube, Bluesky, Mastodon, Telegram, Steam, Roblox, Chess.com, Lichess, GitLab, Hacker News, Keybase, Linktree, Docker Hub.\n\nInspiré de Sherlock / Maigret / Osintgram. Une fiche par page (n / p)."),
-        ("mod_wmn", "🌐 Pseudo sur 600+ sites", "WhatsMyName", "Teste un pseudo sur plus de 600 sites avec la base WhatsMyName (celle utilisée par les pros de l'OSINT), mise à jour automatiquement.\n\nRésultats par pages + page HTML cliquable."),
-        ("mod_person", "🧍 Recherche de personne", "emails · pseudos · annuaires", "Prénom + nom → adresses email probables (testées via Gravatar), pseudos probables, et toutes les recherches prêtes : LinkedIn, Facebook, Pages Blanches, Copains d'avant, dirigeants d'entreprise, PDF…"),
-        ("mod_discord", "💬 Discord lookup", "invitation · ID · widget", "Analyse une invitation Discord (serveur, ID, membres, créateur de l'invitation), la date de n'importe quel ID, un compte (avec token) ou les membres en ligne d'un serveur."),
-        ("mod_user", "👤 Pseudos", "95 sites", "Teste un pseudo sur 95 sites (réseaux, jeux, dev, créa…) en parallèle, avec ses variantes (_ . -).\n\nTu donnes : un pseudo.\nTu obtiens : la liste des comptes trouvés, un niveau d'exposition et une checklist IA."),
-        ("mod_prevname", "⏳ Prevname", "anciens pseudos", "Retrouve les anciens pseudos d'un compte : Steam, Roblox, Minecraft, X, GitHub, Bluesky (historique complet), Discord (ID), 36 sites qui redirigent les anciens noms et 57 plateformes dans les archives web."),
-        ("mod_email", "📧 Email", "fuites · Gravatar", "Vérifie une adresse : fuites de données connues, avatar Gravatar, fournisseur, adresse jetable ou non, sécurité du domaine (SPF/DMARC)."),
-        ("mod_holehe", "📬 Email → comptes", "Holehe · 120 sites", "Teste sur ~120 sites (Instagram, Spotify, Amazon, Discord…) si un compte existe avec un email, comme l'outil Holehe, sans prévenir la personne. + lien Epieos."),
-        ("mod_breaches", "💧 Fuites d'un site", "Have I Been Pwned", "Un site ou un service a-t-il déjà été piraté ? Date de la fuite, nombre de comptes, données exposées (emails, mots de passe, adresses…), d'après la base publique Have I Been Pwned."),
-        ("mod_pwned", "🔑 Fuite de mot de passe", "sans l'envoyer", "Vérifie si un mot de passe est dans les 900 millions de mots de passe fuités, sans jamais l'envoyer (seuls 5 caractères de son empreinte partent).\n\nDonne aussi sa force et le temps pour le casser."),
-        ("mod_phone", "📱 Téléphone", "pays · opérateur", "Analyse un numéro : pays, type (mobile/fixe), opérateur d'origine, fuseau horaire, liens de recherche."),
-        ("mod_bodacc", "📰 Annonces légales (BODACC)", "entreprises · dirigeants", "Créations, ventes, changements de dirigeant, redressements et liquidations d'entreprises françaises, depuis le bulletin officiel (BODACC)."),
-        ("mod_iban", "🏦 IBAN", "clé · pays · banque", "Vérifie un IBAN avant un virement : clé de contrôle, pays, banque, guichet. Contre les faux RIB."),
-        ("mod_vin", "🚗 Véhicule (VIN)", "constructeur · année · modèle", "Décode le numéro de série d'un véhicule : constructeur, pays, année, modèle, énergie. Pour vérifier une annonce d'occasion."),
-        ("mod_crypto", "₿  Crypto", "solde · transactions", "Adresse Bitcoin / Ethereum : solde, nombre de transactions, première et dernière activité."),
-        ("mod_ids", "🆔 Décodeur d'ID & dates", "date cachée d'un lien", "Retrouve la date exacte cachée dans un lien ou un identifiant : vidéo TikTok, post X/Instagram/Threads/LinkedIn/Bluesky/Mastodon, ID Discord, timestamps Unix/Windows/Apple, UUID…\n\nMarche même si la date est masquée ou le post supprimé."),
-    ]),
-    ("IMAGE & GEOINT", [
-        ("mod_maplink", "📎 Lien de carte → coordonnées", "Google Maps · Waze · OSM…", "Colle un lien Google Maps (même court), Apple Plans, Waze, OpenStreetMap, Bing, Yandex ou Here : l'outil sort les coordonnées, l'adresse, tous les formats et ouvre le lieu dans 8 autres cartes (Earth, Mapillary, Géoportail, Peakvisor…)."),
-        ("mod_photobatch", "👣 Lot de photos → trajet", "carte + chronologie", "Donne un dossier de photos : l'outil lit les dates et GPS de toutes les photos, les range dans l'ordre, trace le trajet sur une carte, liste les appareils utilisés et exporte la chronologie pour Excel."),
-        ("mod_imgcompare", "🪞 Comparer deux images", "même photo ? retouche ?", "Dit si deux images sont la même (recadrée, recompressée, retouchée) grâce à 3 empreintes visuelles, et crée une carte des différences. Pratique pour trouver l'original et repérer une retouche."),
-        ("mod_img2gps", "📌 Image → coordonnées", "GPS · IA locale", "Tu donnes une image (fichier ou lien), l'outil sort directement ses coordonnées : GPS caché dans le fichier, sinon estimation par l'IA locale GeoCLIP (top 5) et l'IA de vision, avec adresse, formats DMS/UTM et carte."),
-        ("mod_revimg", "🔎 Recherche inversée d'image", "Lens · Yandex · TinEye · Bing", "Retrouve où une image apparaît sur internet (original, première publication, copies) sur 6 moteurs à la fois : Google Lens, Yandex, TinEye, Bing, SauceNAO, Baidu."),
-        ("mod_geo", "📍 Géoloc photo", "100 % auto par l'IA", "Trouve où une photo a été prise et où se tenait le photographe : GPS caché → IA GeoCLIP → IA de vision qui repère les monuments → triangulation → heure par les ombres.\n\nTu donnes juste la photo."),
-        ("mod_vidinfo", "📼 Vidéo en ligne : date", "YouTube · TikTok · miniatures", "Date exacte de mise en ligne d'une vidéo YouTube / Shorts / TikTok, chaîne, vues, mots-clés cachés, et miniatures prêtes pour la recherche inversée (comme InVID / YouTube DataViewer) : démasque les vieilles vidéos republiées."),
-        ("mod_video", "🎬 Vidéo → images", "images + GPS caché", "Découpe une vidéo en images (planche contact) pour la géoloc ou la recherche de logo, et lit ses métadonnées cachées : date, téléphone, position GPS des vidéos iPhone/Android."),
-        ("mod_logo", "🔖 Recherche de logo", "marque · image inversée", "Identifie une marque à partir d'un logo (IA locale), donne sa fiche, lance la recherche inversée (Google Lens, Bing, TinEye) et calcule le hash favicon Shodan d'un site."),
-        ("mod_meta", "🧾 Métadonnées", "auteur · GPS · nettoyage", "Lit les métadonnées d'une photo, d'un PDF ou d'un document Office (auteur, appareil, GPS, logiciel, dates) et peut créer une copie nettoyée."),
-        ("mod_ela", "🔬 Retouche ?", "analyse ELA", "Cherche les retouches dans une image : analyse ELA, qualité JPEG, empreinte perceptuelle."),
-        ("mod_sun", "🌞 Ombres & soleil", "heure / lieu d'une photo", "Chronolocalisation : l'heure d'une photo grâce aux ombres, les zones possibles sur Terre, ou la course du soleil d'un lieu."),
-        ("mod_weather", "☔ Météo passée", "vérifier une photo", "Météo heure par heure d'un lieu à une date passée : vérifie si une photo (pluie, ciel, neige) colle avec la date annoncée."),
-        ("mod_webcams", "📹 Webcams d'un lieu", "Windy · vérif météo", "Webcams publiques officielles autour d'un lieu (météo, tourisme, stations, ports) avec carte, aperçus et time-lapse de la journée, pour vérifier un lieu ou la météo d'une photo."),
-        ("mod_place", "🌍 Infos d'un lieu", "adresse · UTM · 12 cartes", "Toutes les infos d'un point : adresse, coordonnées dans tous les formats, altitude, et 12 cartes (Street View, Earth 3D, Mapillary, satellite…)."),
-        ("mod_satellite", "📡 Satellite d'avant", "historique depuis 2014", "Compare les images satellite d'un lieu sur ~200 dates depuis 2014 : constructions, démolitions, travaux, véhicules garés…"),
-        ("mod_bearing", "📏 Distance · horizon", "azimut · visibilité", "Distance et direction entre 2 points, point à X km dans une direction, distance de l'horizon, et si un sommet ou une tour est visible malgré la courbure de la Terre."),
-        ("mod_clues", "🧩 Recherche par indices", "trouver le lieu sur la carte", "Combine des indices vus sur une photo (église + pharmacie + arrêt de bus…) pour trouver tous les endroits d'une zone où ils sont proches."),
-        ("mod_planes", "🛫 Avions", "ADS-B en direct", "Avions en vol autour d'un point, en direct (dont les vols militaires visibles), avec carte."),
-    ]),
-    ("INFRA / WEB", [
-        ("mod_iplookup", "🧭 IP lookup", "géo · VPN · Tor · ports", "Tout sur une IP ou un domaine : pays, ville, opérateur, ASN, reverse DNS, détection VPN / proxy / datacenter / Tor, ports ouverts et failles (Shodan InternetDB), autres sites sur la même IP, contact abus, carte.\n\n7 sources interrogées en même temps."),
-        ("mod_domain", "🔭 Domaine / IP", "DNS · SSL · ports · CVE", "Audit d'un domaine ou d'une IP : DNS, sous-domaines, certificat, ports ouverts, failles connues, technologies, en-têtes de sécurité, rapport IA."),
-        ("mod_harvest", "🌾 Récolte d'un domaine", "façon theHarvester", "Sous-domaines, emails, serveurs mail et personnes (Hunter) d'un domaine, depuis les certificats SSL, HackerTarget, CertSpotter et les pages du site."),
-        ("mod_urlscan", "📸 URLScan.io", "capture · IP · verdict", "Voir un site sans le visiter : historique des scans publics, nouveau scan avec capture d'écran, IP, serveur, domaines contactés et verdict."),
-        ("mod_wayurls", "🗃 Fichiers archivés", "Wayback · PDF · sauvegardes", "Liste les fichiers et pages d'un domaine gardés par la Wayback Machine : documents, sauvegardes oubliées, pages supprimées. Export CSV."),
-        ("mod_mac", "🔌 Adresse MAC", "fabricant de l'appareil", "Trouve le fabricant d'un appareil à partir de son adresse MAC et dit si l'adresse est aléatoire."),
-        ("mod_link", "🔗 Analyse de lien", "anti-phishing", "Avant de cliquer : suit les redirections, compare au vrai site, âge du domaine, signaux de phishing."),
-        ("mod_headers", "📨 En-têtes d'email", "phishing · origine", "Analyse un email suspect : trajet des serveurs, IP et pays d'origine, SPF/DKIM/DMARC, faux expéditeur, domaine tout neuf → verdict."),
-        ("mod_extract", "🧲 Extracteur d'indices", "page · fichier · texte", "Sort automatiquement les emails, téléphones, réseaux sociaux, IP, cryptos, IBAN, identifiants Google Analytics, clés exposées et coordonnées d'une page web, d'un fichier ou d'un texte."),
-        ("mod_archive", "📚 Archives d'une page", "Wayback Machine", "Retrouve les anciennes versions d'une page ou toutes les pages archivées d'un site (contacts effacés, anciens documents…)."),
-        ("mod_net", "🌐 Réseau", "IP · ASN · MAC", "Ton IP publique vue par les sites, propriétaire et plage d'une IP, opérateur d'un ASN, fabricant d'un appareil d'après son adresse MAC."),
-        ("mod_dorks", "🔍 Dorks", "Google avancé", "Génère des recherches Google avancées (fichiers exposés, pages d'admin, fuites, profils) pour un domaine ou un pseudo."),
-        ("mod_prosrc", "🗂 Sources pro", "Censys · Hunter · IntelX…", "Prépare et ouvre les sources pros adaptées à ta cible : Censys, Hunter, Epieos, Intelligence X, DeHashed, SecurityTrails, GreyNoise, BuiltWith, OSINT Framework, Bellingcat."),
-    ]),
-    ("CTF / ANALYSE", [
-        ("mod_decode", "🔐 Décodeur", "mode magique", "Décode automatiquement Base64, hexa, binaire, Morse, ROT13, JWT, URL… même empilés les uns dans les autres. Encode aussi."),
-        ("mod_toolbox", "🧰 Boîte à outils", "hors ligne", "Stéganographie (message caché dans une image, données après la fin du fichier), strings d'un fichier / .exe, calculateur CIDR, convertisseur de timestamps, générateur de mots de passe, convertisseur de coordonnées. Tout tourne sur ton PC."),
-        ("mod_hash", "🔢 Hash & fichier", "vrai type · réputation", "Empreintes d'un fichier, détection des extensions trompeuses (facture.pdf.exe), réputation (CIRCL, VirusTotal), identification d'un hash."),
-    ]),
-    ("APPRENDRE", [
-        ("mod_learn", "🎓 Apprendre à coder", f"{len(LEARN_LANGS)} langages · prof IA", "Apprends à programmer et à créer tes propres outils, sans limite : Python, JavaScript, HTML/CSS, C, C++, C#, Java, Rust, Go, PHP, SQL, Bash, PowerShell, Lua…\n\n"
-         "Cours pas à pas, sujets libres, exercices corrigés (ton code est exécuté puis corrigé par l'IA), prof IA, et un parcours pour coder ton propre outil OSINT jusqu'au .exe."),
-    ]),
-    ("BUSINESS", [
-        ("mod_biz", "🏢 Entreprises", "registre + Pages Jaunes", "Registre officiel des entreprises françaises : SIREN, dirigeants, effectif, adresse, état, liens Pappers / Pages Jaunes, analyse IA."),
-    ]),
-    ("ANONYMAT", [
-        ("mod_anon", "🧅 Anonymat", "Tor · changer d'IP · navigateur", "Réduit ce que les sites voient de toi : test d'exposition (IP réelle vs IP via Tor), changement d'IP à la demande (nouveau circuit Tor), ouverture de Tor Browser ou Firefox sur Tor, et tests de fuites WebRTC / DNS.\n\nCe n'est pas l'anonymat total : la connexion à un compte perso te reconnaît quand même."),
-    ]),
-    ("CAT.EXE", [
-        ("mod_diagnostics", "🧪 Diagnostic système", "Python · dépendances · outils", "Vérifie localement Python, les modules, Ollama, FFmpeg et Playwright sans envoyer de données."),
-        ("mod_graph", "🧬 Graphe d'enquête", "façon Obsidian · fenêtre", "Une fenêtre à part qui dessine ton enquête en toile : pseudos, comptes, emails, IP, lieux… reliés entre eux.\n\nChaque module que tu lances l'alimente tout seul, en direct. Tu peux ajouter des éléments, les relier, mettre des notes, chercher, filtrer par type et exporter en image.\n\nInspiré d'Obsidian et Maltego."),
-        ("mod_autoscan", "⚡ Scan auto", "façon SpiderFoot", "Donne une cible (pseudo, email, domaine, IP, nom…) : l'outil lance toutes les recherches possibles, puis recommence sur ce qu'il trouve, et remplit le graphe tout seul."),
-        ("mod_report", "📄 Rapport", "PDF · HTML", "Tout ce que tu as trouvé pendant la session, avec synthèse IA, en PDF (lisible sur iPhone) ou en page web."),
-        ("mod_settings", "🔧 Réglages", "langue · IA locale · animations", "Langue, modèles d'IA locale (Ollama), animations, token Discord, dossier des résultats."),
-        ("discord", "💬 Discord", DISCORD[8:], "Rejoins la communauté Cat.exe : challenges, classement, nouvelles vidéos."),
-        ("quit", "🚪 Quitter", "", "Fermer Cat.exe."),
-    ]),
-]
-
-
-KEYW = {"mod_bodacc": "bodacc entreprise liquidation dirigeant societe annonce legale", "mod_iban": "iban rib banque virement", "mod_vin": "vin voiture vehicule plaque carte grise", "mod_mac": "mac fabricant appareil wifi box", "mod_wayurls": "wayback archive fichiers pdf urls cdx", "mod_revimg": "google lens tineye yandex reverse image inversee", "mod_webcams": "webcam camera windy live", "mod_holehe": "holehe email comptes inscrit", "mod_harvest": "theharvester sous-domaines emails hunter", "mod_urlscan": "urlscan capture phishing scan", "mod_autoscan": "spiderfoot auto scan automatique", "mod_prosrc": "censys hunter intelx dehashed epieos osint framework", "mod_anon": "tor anonyme ip vpn proxy navigateur changer ip", "mod_maplink": "google maps waze lien coordonnees gps", "mod_photobatch": "dossier exif trajet chronologie timeline", "mod_imgcompare": "hash similaire doublon retouche original", "mod_vidinfo": "youtube tiktok invid dataviewer date miniature", "mod_breaches": "hibp piratage fuite site", "mod_graph": "obsidian maltego toile liens enquete reseau", "mod_social": "sherlock maigret instagram tiktok reddit github profil", "mod_wmn": "whatsmyname sherlock pseudo username", "mod_iplookup": "ip geoip vpn tor shodan",
-        "mod_img2gps": "gps coordonnees image photo exif geoclip", "mod_person": "nom prenom email linkedin", "mod_discord": "invite serveur snowflake",
-        "mod_toolbox": "stegano strings cidr timestamp offline", "mod_pwned": "password mdp pwned hibp", "mod_ids": "snowflake timestamp tiktok date", "mod_video": "film mp4 frames", "mod_geo": "geoint gps localisation",
-        "mod_headers": "mail phishing spf dkim", "mod_decode": "base64 cyberchef ctf", "mod_hash": "md5 sha256 virus malware", "mod_net": "ip asn mac whois",
-        "mod_learn": "dev code programmer python cours apprendre javascript", "mod_archive": "wayback", "mod_satellite": "esri imagery historique", "mod_diagnostics": "diagnostic système dépendances python rich pillow heic ollama ffmpeg playwright"}
+SECTIONS = build_sections(len(LEARN_LANGS), DISCORD)
 
 
 def main_items():

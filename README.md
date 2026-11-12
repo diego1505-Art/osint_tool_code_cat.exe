@@ -61,6 +61,8 @@ catexe/app.py        # orchestration de l'application et modules
 catexe/config.py     # configuration locale non versionnée
 catexe/core_utils.py  # utilitaires purs partagés et testables
 catexe/http_client.py# client HTTP partagé
+catexe/modules/ui.py   # menus et saisies terminal
+catexe/modules/menu_registry.py # registre déclaratif du menu
 catexe/__init__.py
 lang/                # traductions intégrées
 resultats/           # rapports locaux, ignorés par Git

@@ -13,6 +13,18 @@ Réduire progressivement le couplage du monolithe `catexe/app.py` sans modifier 
 - `haversine` : distance GPS ;
 - `parse_json` : extraction tolérante d’un objet JSON.
 
+Le registre du menu est maintenant dans `catexe/modules/menu_registry.py` :
+
+- `build_sections()` construit les sections et leurs 61 entrées ;
+- `KEYW` contient les mots-clés de recherche ;
+- le nombre de langages et l’URL Discord sont injectés par l’application.
+
+Les primitives terminal sont dans `catexe/modules/ui.py` :
+
+- `UIContext` regroupe Rich, la traduction, les couleurs et le mode flèches ;
+- `select`, `ask_yes`, `ask_num`, `ask_text` et `read_key` sont testables hors du monolithe ;
+- `app.py` conserve des façades de même signature pour la migration progressive.
+
 Ces fonctions n’ont plus de dépendance à Rich, au réseau ou à l’état global de l’application.
 
 ## Structure cible
@@ -25,6 +37,8 @@ catexe/
 ├── diagnostics.py         # diagnostic système
 ├── http_client.py         # session HTTP partagée
 └── modules/
+    ├── menu_registry.py   # registre déclaratif du menu
+    ├── ui.py              # menus et saisies terminal
     └── sources/           # adaptateurs de sources à isoler ensuite
 ```
 
