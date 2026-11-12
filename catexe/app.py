@@ -13,6 +13,7 @@ from .core_utils import clean_path, haversine, parse_json, stamp
 from .diagnostics import collect_checks
 from .http_client import create_session
 from .modules.geolocation import GeoHypothesis, confidence_text, limitation_text, rank_hypotheses
+from .modules.financial_identifiers import decode_vin, validate_iban
 from .modules.ip_attribution import summarize_ip_sources
 from .modules.menu_registry import KEYW, build_sections
 from .modules.sources.results import SourceResult, result_from_probe, source_error
@@ -8805,18 +8806,20 @@ def mod_iban():
     if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{10,30}", s):
         log("Ce n'est pas un IBAN (2 lettres, 2 chiffres, puis le compte).", Y)
         return pause()
-    ok = int("".join(str(int(c, 36)) for c in s[4:] + s[:4])) % 97 == 1
-    cc, ln = s[:2], IBAN_LEN.get(s[:2])
-    rows = [("IBAN", " ".join(s[i:i + 4] for i in range(0, len(s), 4))), ("Clé de contrôle", "valide" if ok else "FAUSSE : IBAN mal recopié ou inventé"),
-            ("Pays", cc), ("Longueur", f"{len(s)}" + (f" (attendu {ln})" if ln and ln != len(s) else " (correcte)" if ln else ""))]
-    if cc in ("FR", "MC") and len(s) == 27:
-        rows += [("Code banque", s[4:9] + (f" · {FR_BANKS[s[4:9]]}" if s[4:9] in FR_BANKS else "")), ("Code guichet", s[9:14]), ("N° de compte", s[14:25]), ("Clé RIB", s[25:27])]
+    result = validate_iban(s, IBAN_LEN, FR_BANKS)
+    rows = [("IBAN", " ".join(result.value[i:i + 4] for i in range(0, len(result.value), 4))),
+            ("Clé de contrôle", "valide" if result.checksum_valid else "FAUSSE : IBAN mal recopié ou inventé"),
+            ("Pays", result.country), ("Longueur", f"{result.length}" + (f" (attendu {result.expected_length})" if result.expected_length and not result.length_valid else " (correcte)" if result.expected_length else " (pays non référencé)"))]
+    if result.bank_code:
+        rows += [("Code banque", result.bank_code + (f" · {result.bank_name}" if result.bank_name else "")), ("Code guichet", s[9:14]), ("N° de compte", s[14:25]), ("Clé RIB", s[25:27])]
     try:
         b = get_json(f"https://openiban.com/validate/{s}?getBIC=true&validateBankCode=true", 10).get("bankData", {})
         if b.get("name") or b.get("bic"):
             rows += [("Banque", b.get("name")), ("BIC", b.get("bic")), ("Ville", b.get("city"))]
     except Exception:
         pass
+    ok = result.structurally_valid
+    rows.append(("Verdict local", "structure et clé cohérentes" if ok else "invalide : longueur ou clé incohérente"))
     con.print(kv(rows, "🏦 IBAN", G if ok else R_STYLE))
     con.print(f"[{M}]Un IBAN valide ne prouve pas que le compte appartient à la personne : en cas de doute (faux RIB), appelle l'entreprise sur un numéro que tu connais déjà.")
     add_report("mod_iban", "IBAN", "\n".join(f"{k} : {v}" for k, v in rows if v))
@@ -8834,13 +8837,13 @@ VIN_WMI = {"VF1": "Renault", "VF3": "Peugeot", "VF7": "Citroën", "VF6": "Renaul
 def mod_vin():
     con.rule(f"[{G}]🚗 NUMÉRO DE SÉRIE D'UN VÉHICULE (VIN)")
     v = re.sub(r"[\s-]", "", ask_text("VIN (17 caractères, sur la carte grise case E ou le pare-brise)")).upper()
-    if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", v):
+    result = decode_vin(v, VIN_REG, VIN_WMI)
+    if not result.valid_format:
         log("Un VIN fait 17 caractères, sans les lettres I, O et Q.", Y)
         return pause()
-    yc = "ABCDEFGHJKLMNPRSTVWXY123456789"
-    y = 2010 + yc.index(v[9]) if v[9] in yc else None
-    rows = [("VIN", v), ("Constructeur (WMI)", f"{v[:3]} · {VIN_WMI.get(v[:3], 'inconnu de ma liste')}"), ("Zone de fabrication", VIN_REG.get(v[0], "?")),
-            ("Année-modèle (10e caractère)", (f"{y - 30}" if y > 2027 else f"{y} ou {y - 30}") if y else "?"), ("Usine (11e caractère)", v[10]), ("N° de série", v[11:])]
+    check_label = "valide" if result.check_digit_valid is True else "invalide" if result.check_digit_valid is False else "non applicable / non déterminable"
+    rows = [("VIN", result.value), ("Contrôle de cohérence", check_label), ("Constructeur (WMI)", f"{v[:3]} · {result.manufacturer or 'inconnu de ma liste'}"), ("Zone de fabrication", result.region or "?"),
+            ("Année-modèle (10e caractère)", result.model_year or "?"), ("Usine (11e caractère)", v[10]), ("N° de série", result.serial_number or "?")]
     try:
         with con.status(f"[{P}]Base NHTSA…", spinner="dots12"):
             d = get_json(f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{v}?format=json", 20)["Results"][0]
