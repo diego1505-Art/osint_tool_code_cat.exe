@@ -1,4 +1,4 @@
-# CAT.EXE OSINT · GEOINT
+# CAT.EXE OSINT · GEOINT   (https://github.com/cat3xe/cat.exe-osint)
 
 CAT.EXE est un outil local d’audit OSINT/GEOINT en ligne de commande, écrit en Python 3.11+. Il regroupe des modules d’analyse de données publiques, à utiliser sur soi-même ou sur des cibles autorisées.
 
