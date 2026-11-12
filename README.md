@@ -1,72 +1,116 @@
 # CAT.EXE OSINT · GEOINT
 
-Outil OSINT et GEOINT en ligne de commande (Python 3.11+, Rich). Il regroupe des modules de recherche sur des **données publiques**, à utiliser sur soi-même ou sur des cibles autorisées.
+CAT.EXE est un outil local d’audit OSINT/GEOINT en ligne de commande, écrit en Python 3.11+. Il regroupe des modules d’analyse de données publiques, à utiliser sur soi-même ou sur des cibles autorisées.
 
-## Usage légal
-- Testez l'outil sur **vous-même** ou sur des données publiques.
-- Ne l'utilisez pas pour surveiller, harceler ou identifier une personne sans son accord.
-- L'auteur n'est pas responsable d'un usage abusif.
+## Usage légal et confidentialité
 
-## Ce que fait le code, et vers où il envoie
-Chaque module interroge des services publics. Liste principale :
-- **E-mail** : vérification MX/SPF/DMARC, fuites (XposedOrNot), comptes (Holehe reproduit en interne, sur une liste de sites).
-- **IP / domaine** : ipwho.is, crt.sh, HackerTarget, CertSpotter, urlscan.io, web.archive.org.
-- **Banque / véhicule / appareil** : openiban.com (IBAN), NHTSA vPIC (VIN), macvendors.com (MAC).
-- **Entreprises** : BODACC (OpenDataSoft).
-- **Anonymat** : passe par Tor (ports 9050/9150) si Tor est installé ; sinon le module le signale.
+Utilisez CAT.EXE uniquement sur vos propres données ou avec une autorisation explicite. Ne l’utilisez pas pour surveiller, harceler ou identifier une personne sans son accord.
 
-Aucune donnée n'est envoyée à l'auteur. Les résultats sont enregistrés localement dans `resultats/`.
-Les clés API (Hunter, Windy) sont demandées à l'utilisateur et stockées sur sa machine uniquement.
+Les résultats sont enregistrés localement dans `resultats/`. Les tokens et clés API sont conservés séparément dans `secrets.json`, ignoré par Git. Les secrets sont caviardés des rapports et ne sont pas envoyés à l’auteur. Les cookies doivent être traités comme des mots de passe et ne doivent jamais être partagés.
 
-## Installation
-```
+## Installation depuis les sources
+
+### Windows
+
+```powershell
 py -3.11 -m pip install -r requirements.txt
 py -3.11 main.py
 ```
 
-### Diagnostic système
+Vous pouvez aussi lancer `LANCER.bat`. Le script recherche Python 3.11+, installe les dépendances et lance CAT.EXE.
 
-Depuis la racine du dépôt, le diagnostic local vérifie Python, les dépendances,
-Ollama, FFmpeg et Playwright sans envoyer de données :
+### Linux et macOS
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 main.py
+```
+
+## Diagnostic système
+
+Le diagnostic local vérifie Python, les dépendances, Ollama, FFmpeg et Playwright sans envoyer de données :
 
 ```bash
 python -m catexe --diagnostic
 python -m catexe --diagnostic --json
 ```
 
-Le même contrôle est disponible dans le menu **CAT.EXE → Diagnostic système**.
+Le même contrôle est accessible depuis **CAT.EXE → Diagnostic système**.
 
-Windows : lancez `LANCER.bat`. `CREER_EXE.bat` produit un `.exe` avec PyInstaller.
+## Build Windows autonome
 
-## Vérifier le fichier
-Le `.exe` publié a une empreinte SHA256 indiquée dans les Releases. Vérifiez-la avec :
-```
-certutil -hashfile CATEXE.exe SHA256
-```
-
-## Faux positifs antivirus
-Les programmes Python compilés (PyInstaller) sont parfois signalés à tort par les antivirus. Le code source complet est ici : vous pouvez le lire et le compiler vous-même.
-
-## Licence
-MIT, voir `LICENSE`.
-
-## Crédits
-Les données d’exécution sont enregistrées localement dans `resultats/` et ne sont pas versionnées.
-
-## Structure du projet
+Depuis un poste Windows connecté à Internet :
 
 ```text
-main.py              # point d'entrée
-catexe/app.py        # orchestration de l'application et modules
-catexe/config.py     # configuration locale non versionnée
-catexe/core_utils.py  # utilitaires purs partagés et testables
-catexe/http_client.py# client HTTP partagé
-catexe/modules/ui.py   # menus et saisies terminal
-catexe/modules/menu_registry.py # registre déclaratif du menu
-catexe/__init__.py
-lang/                # traductions intégrées
-resultats/           # rapports locaux, ignorés par Git
-cache/               # cache local, ignoré par Git
+CREER_EXE.bat
 ```
 
-Les anciennes données de challenges et les résultats personnels ne font plus partie du dépôt.
+Le script utilise `CatExe.spec`, installe PyInstaller si nécessaire et produit :
+
+```text
+CatExe-OSINT/
+├── CatExe-OSINT.exe
+├── data/
+├── lang/
+├── resultats/
+└── cache/
+```
+
+Le binaire est console, autonome vis-à-vis de Python et ne contient pas de configuration personnelle. Vérifiez l’empreinte SHA256 d’une release avec :
+
+```powershell
+certutil -hashfile CatExe-OSINT.exe SHA256
+```
+
+Les programmes Python compilés peuvent être signalés à tort par certains antivirus. Vérifiez le dépôt, la release et l’empreinte avant toute autorisation.
+
+## Fonctionnalités principales
+
+- audit de pseudos, e-mails, domaines et IP ;
+- analyse de métadonnées et GPS EXIF ;
+- hypothèses de géolocalisation avec limites explicites ;
+- validation locale IBAN/VIN ;
+- rapports HTML/PDF et graphe d’enquête ;
+- profils IA locaux texte, légère, vision, OCR, cyber et code ;
+- catalogue cyber local avec filtres, risques et sources ;
+- stockage local des secrets avec caviardage des exports.
+
+## Tests et qualité
+
+Les outils de développement sont déclarés dans `requirements-dev.txt` :
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m py_compile main.py catexe/*.py catexe/modules/*.py tests/*.py
+pytest
+ruff check .
+```
+
+`app.py` et l’ancien composant UI restent temporairement exclus du lint ruff pendant leur extraction progressive, mais restent compilés et couverts par les tests d’intégration.
+
+## Structure
+
+```text
+main.py                         # point d’entrée
+catexe/app.py                   # orchestration historique
+catexe/modules/                 # composants extraits et testables
+data/cyber_tools.json           # catalogue cyber local
+lang/                           # traductions intégrées
+cookies/incoming/               # espace local réservé aux imports autorisés
+resultats/                      # rapports locaux ignorés par Git
+cache/                          # cache local ignoré par Git
+docs/                           # documentation des limites et phases
+tests/                          # tests unitaires locaux
+```
+
+Voir également :
+
+- [`docs/metadata.md`](docs/metadata.md)
+- [`docs/local-ai.md`](docs/local-ai.md)
+- [`docs/cyber-catalog.md`](docs/cyber-catalog.md)
+- [`docs/troubleshooting.md`](docs/troubleshooting.md)
+- [`cookies/README.md`](cookies/README.md)
+
+## Licence
+
+MIT, voir [`LICENSE`](LICENSE).
