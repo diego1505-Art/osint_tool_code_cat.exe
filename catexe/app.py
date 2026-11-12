@@ -30,6 +30,7 @@ from .modules.financial_identifiers import decode_vin, validate_iban
 from .modules.ai_router import AI_PROFILES, configured_model, profile_for
 from .modules.cyber_catalog import categories as cyber_categories, load_catalog, platforms as cyber_platforms, risk_label, search_tools
 from .modules.ip_attribution import summarize_ip_sources
+from .modules.username_utils import normalize_username
 from .modules.menu_registry import KEYW, build_sections
 from .modules.metadata import cardinal, read_exif
 from .modules.secure_store import SecretStore
@@ -936,7 +937,10 @@ def variants(u):
 
 def mod_user():
     con.rule(f"[{G}]👤 RECHERCHE DE PSEUDO")
-    u = Prompt.ask(f"[{G}]Pseudo").strip().lstrip("@")
+    raw_u = Prompt.ask(f"[{G}]Pseudo")
+    u = normalize_username(raw_u)
+    if u != raw_u.strip().lstrip("@"):
+        con.print(f"[{M}]Pseudo Unicode normalisé :[/] {escape(u)}")
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,40}", u):
         con.print(f"[{R}]Pseudo invalide.")
         return pause()
@@ -6874,23 +6878,35 @@ def wmn_data():
 
 
 def wmn_check(s, u):
-    url = s["uri_check"].replace("{account}", u)
+    normalized = normalize_username(u)
+    encoded = requests.utils.quote(normalized, safe="")
+    url = s["uri_check"].replace("{account}", encoded)
     try:
         if s.get("post_body"):
-            r = HTTP.post(url, data=s["post_body"].replace("{account}", u), headers=s.get("headers") or {}, timeout=8, allow_redirects=True)
+            r = HTTP.post(url, data=s["post_body"].replace("{account}", normalized), headers=s.get("headers") or {}, timeout=8, allow_redirects=True)
         else:
             r = HTTP.get(url, headers=s.get("headers") or {}, timeout=8, allow_redirects=True)
     except Exception:
         return None
+    if s.get("name", "").casefold() == "stackoverflow" and "api.stackexchange.com" in url:
+        try:
+            items = r.json().get("items", [])
+            ok = any(str(item.get("display_name", "")).casefold() == normalized.casefold() for item in items)
+        except Exception:
+            ok = False
+        return (s.get("uri_pretty") or url).replace("{account}", normalized) if ok else None
     ok = r.status_code == s.get("e_code") and s.get("e_string", "") in r.text
     if ok and s.get("m_string") and s["m_string"] in r.text:
         ok = False
-    return (s.get("uri_pretty") or url).replace("{account}", u) if ok else None
+    return (s.get("uri_pretty") or url).replace("{account}", normalized) if ok else None
 
 
 def mod_wmn(u=None):
     con.rule(f"[{G}]🌐 PSEUDO SUR 600+ SITES (WhatsMyName)")
-    u = u or ask_text("Pseudo").strip().lstrip("@")
+    raw_u = u or ask_text("Pseudo")
+    u = normalize_username(raw_u)
+    if u != raw_u.strip().lstrip("@"):
+        con.print(f"[{M}]Pseudo Unicode normalisé :[/] {escape(u)}")
     if not u:
         return
     try:

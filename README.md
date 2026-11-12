@@ -108,6 +108,7 @@ Voir également :
 - [`docs/metadata.md`](docs/metadata.md)
 - [`docs/local-ai.md`](docs/local-ai.md)
 - [`docs/cyber-catalog.md`](docs/cyber-catalog.md)
+- [`docs/pseudo-search.md`](docs/pseudo-search.md)
 - [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - [`cookies/README.md`](cookies/README.md)
 
