@@ -1,0 +1,8 @@
+{
+  "anim": true,
+  "ollama_model": "qwen2.5vl:7b",
+  "ollama_text": "qwen2.5:3b",
+  "lang": "fr",
+  "theme": "graphite",
+  "sobre": true
+}
