@@ -27,9 +27,9 @@ except ImportError:
     print("Modules manquants. Lance : pip install -r requirements.txt")
     sys.exit(1)
 
-if sys.version_info < (3, 14):
-    print(f"CAT.EXE a besoin de Python 3.14 minimum (tu as {sys.version_info.major}.{sys.version_info.minor}).")
-    print("Installe Python 3.14 depuis python.org (ou : winget install Python.Python.3.14), puis relance.")
+if sys.version_info < (3, 11):
+    print(f"CAT.EXE a besoin de Python 3.11 minimum (tu as {sys.version_info.major}.{sys.version_info.minor}).")
+    print("Installe Python 3.11 ou plus récent depuis python.org (ou : winget install Python.Python.3.11), puis relance.")
     input("Entrée pour quitter… ")
     sys.exit(1)
 
@@ -5520,7 +5520,7 @@ PY_LESSONS = {
 **Python** est le langage de Cat.exe : simple à lire, et parfait pour l'OSINT, l'automatisation et l'IA.
 
 ## Installer
-- Windows : `winget install Python.Python.3.14` (ou python.org, coche **Add to PATH**).
+- Windows : `winget install Python.Python.3.11` (ou python.org, coche **Add to PATH**).
 - Vérifie dans un terminal : `python --version`
 - Éditeur conseillé : **VS Code** + l'extension Python.
 

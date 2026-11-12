@@ -1,6 +1,6 @@
 # CAT.EXE OSINT · GEOINT
 
-Outil OSINT et GEOINT en ligne de commande (Python 3.14, Rich). Il regroupe des modules de recherche sur des **données publiques**, à utiliser sur soi-même ou sur des cibles autorisées.
+Outil OSINT et GEOINT en ligne de commande (Python 3.11+, Rich). Il regroupe des modules de recherche sur des **données publiques**, à utiliser sur soi-même ou sur des cibles autorisées.
 
 ## Usage légal
 - Testez l'outil sur **vous-même** ou sur des données publiques.
@@ -20,8 +20,8 @@ Les clés API (Hunter, Windy) sont demandées à l'utilisateur et stockées sur 
 
 ## Installation
 ```
-py -3.14 -m pip install -r requirements.txt
-py -3.14 main.py
+py -3.11 -m pip install -r requirements.txt
+py -3.11 main.py
 ```
 Windows : lancez `LANCER.bat`. `CREER_EXE.bat` produit un `.exe` avec PyInstaller.
 

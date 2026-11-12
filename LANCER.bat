@@ -6,8 +6,8 @@ set "PYEXE="
 set "PYARGS="
 call :findpy
 if not defined PYEXE (
-  echo [CAT.EXE] Python 3.14 minimum absent : installation automatique...
-  winget install -e --id Python.Python.3.14 --scope user --accept-source-agreements --accept-package-agreements
+  echo [CAT.EXE] Python 3.11 minimum absent : installation automatique...
+  winget install -e --id Python.Python.3.11 --scope user --accept-source-agreements --accept-package-agreements
   call :findpy
 )
 if not defined PYEXE (
@@ -26,10 +26,10 @@ exit /b 0
 :findpy
 set "PYEXE="
 set "PYARGS="
-py -3.14 -c "import sys" >nul 2>&1 && (set "PYEXE=py" & set "PYARGS=-3.14")
-if not defined PYEXE if exist "%LOCALAPPDATA%\Programs\Python\Python314\python.exe" set "PYEXE=%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
+py -3.11 -c "import sys" >nul 2>&1 && (set "PYEXE=py" & set "PYARGS=-3.14")
+if not defined PYEXE if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" set "PYEXE=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
 if not defined PYEXE (
-  python -c "import sys; sys.exit(0 if sys.version_info >= (3, 14) else 1)" >nul 2>&1
+  python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
   if not errorlevel 1 set "PYEXE=python"
 )
 goto :eof
