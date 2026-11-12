@@ -1,9 +1,0 @@
-requests
-rich
-pillow
-pillow-heif
-phonenumbers
-numpy
-pypdf
-fpdf2
-pysocks
