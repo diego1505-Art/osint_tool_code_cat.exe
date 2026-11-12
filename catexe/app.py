@@ -13,6 +13,7 @@ from .core_utils import clean_path, haversine, parse_json, stamp
 from .diagnostics import collect_checks
 from .http_client import create_session
 from .modules.menu_registry import KEYW, build_sections
+from .modules.sources.results import SourceResult, result_from_probe, source_error
 from .modules.ui import UIContext, ask_num as ui_ask_num, ask_text as ui_ask_text, ask_yes as ui_ask_yes, read_key as ui_read_key, select as ui_select
 
 try:
@@ -930,7 +931,7 @@ SITES = [
 def check_site(site, u):
     name, cat, url, api, fn, hdr = site
     if fn is None:
-        return "manuel", None
+        return SourceResult(name, "unknown", "none", url.replace("{u}", u), "Parser non disponible : vérification manuelle nécessaire")
     target = (api or url).replace("{u}", u)
     for essai in range(2):
         try:
@@ -939,12 +940,11 @@ def check_site(site, u):
                 time.sleep(2)
                 continue
             v = fn(r.status_code, r.text[:400000], u)
-            if v not in (0, 1) and r.status_code in (401, 403, 429, 503):
-                return "injoignable", r.status_code
-            return ("trouvé" if v == 1 else "absent" if v == 0 else "à vérifier"), r.status_code
-        except requests.RequestException:
+            return result_from_probe(source=name, url=r.url, http_status=r.status_code, value=v)
+        except requests.RequestException as exc:
             time.sleep(1)
-    return "injoignable", None
+            last_error = exc
+    return source_error(source=name, url=target, reason=str(last_error))
 
 
 def variants(u):
