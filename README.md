@@ -59,6 +59,7 @@ Les données d’exécution sont enregistrées localement dans `resultats/` et n
 main.py              # point d'entrée
 catexe/app.py        # orchestration de l'application et modules
 catexe/config.py     # configuration locale non versionnée
+catexe/core_utils.py  # utilitaires purs partagés et testables
 catexe/http_client.py# client HTTP partagé
 catexe/__init__.py
 lang/                # traductions intégrées

@@ -8,8 +8,8 @@ A utiliser sur tes propres comptes, domaines et photos, ou avec l'accord de la p
 import os, sys, re, io, json, ssl, socket, base64, time, math, datetime, webbrowser, random, hashlib
 import concurrent.futures as cf
 from pathlib import Path
-
 from .config import load_config
+from .core_utils import clean_path, haversine, parse_json, stamp
 from .diagnostics import collect_checks
 from .http_client import create_session
 
@@ -180,11 +180,6 @@ def lang_download(code):
 lang_load(CFG.get("lang", "fr"))
 
 
-# ============================================================ utils
-def stamp():
-    return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
 def log(msg, style=M):
     con.print(f"[{M}]{datetime.datetime.now():%H:%M:%S}[/] [{style}]{escape(str(msg))}[/]")
 
@@ -341,13 +336,6 @@ def pause():
     Prompt.ask(f"\n[{M}]Entrée pour revenir au menu[/]", default="", show_default=False)
 
 
-def clean_path(p):
-    p = p.strip()
-    if p.startswith("& "):
-        p = p[2:]
-    return p.strip().strip("'\"")
-
-
 _SRV = {}
 
 
@@ -417,24 +405,6 @@ def open_file(path):
     except Exception:
         pass
     return url
-
-
-def haversine(a, b, c, d):
-    r = math.radians
-    h = math.sin(r(c - a) / 2) ** 2 + math.cos(r(a)) * math.cos(r(c)) * math.sin(r(d - b) / 2) ** 2
-    return 2 * 6371 * math.asin(math.sqrt(h))
-
-
-def parse_json(t):
-    m = re.search(r"\{[\s\S]*\}", t or "")
-    if not m:
-        return None
-    for s in (m.group(0), re.sub(r",\s*([}\]])", r"\1", m.group(0))):
-        try:
-            return json.loads(s)
-        except Exception:
-            pass
-    return None
 
 
 # ============================================================ IA
