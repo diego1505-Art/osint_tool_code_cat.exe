@@ -15,6 +15,7 @@ from .http_client import create_session
 from .modules.geolocation import GeoHypothesis, confidence_text, limitation_text, rank_hypotheses
 from .modules.financial_identifiers import decode_vin, validate_iban
 from .modules.ai_router import AI_PROFILES, configured_model, profile_for
+from .modules.cyber_catalog import categories as cyber_categories, load_catalog, platforms as cyber_platforms, risk_label, search_tools
 from .modules.ip_attribution import summarize_ip_sources
 from .modules.menu_registry import KEYW, build_sections
 from .modules.secure_store import SecretStore
@@ -9520,6 +9521,89 @@ def tuto_gate(fn, name):
     c = select("Et maintenant ?", [{"label": "▶ Lancer le module", "value": "go"}, {"label": "↩ Retour au menu", "value": "back"}],
                echo=False, hint="(ce tuto reste disponible avec la touche ? dans le menu)")
     return c == "go"
+
+
+def mod_cyber_catalog():
+    """Catalogue local de hacking-ethique ; aucune commande n’est exécutée."""
+    path = BASE / "data" / "cyber_tools.json"
+    try:
+        catalog = load_catalog(path)
+    except Exception as e:
+        con.print(f"[{R_STYLE}]Catalogue cyber indisponible : {escape(str(e))}")
+        pause()
+        return
+    tools = catalog["tools"]
+    repo = catalog.get("source", {}).get("repository", "https://github.com/diego1505-Art/hacking-ethique")
+    filters = {"category": None, "risk": None, "platform": None, "query": ""}
+    while True:
+        active = ", ".join(f"{k}={v}" for k, v in filters.items() if v) or "aucun filtre"
+        action = select("🛡️ CATALOGUE CYBER", [
+            {"label": "🔎 Rechercher", "value": "search", "desc": "nom, description, catégorie, langage"},
+            {"label": "🗂️ Filtrer par catégorie", "value": "category", "desc": "catégories issues de la source"},
+            {"label": "⚠️ Filtrer par risque", "value": "risk", "desc": "faible · moyen · élevé"},
+            {"label": "💻 Filtrer par plateforme", "value": "platform", "desc": "Windows · Linux · macOS · Web · Docker"},
+            {"label": f"📚 Voir les résultats ({len(search_tools(tools, **filters))})", "value": "list", "desc": active},
+            {"label": "✕ Réinitialiser les filtres", "value": "reset", "desc": active},
+            {"label": "↗ Ouvrir le dépôt source", "value": "source", "desc": repo},
+            {"label": "↩ Retour", "value": "back", "desc": "aucune installation automatique"},
+        ], back=False, echo=False, paged=True)
+        if action in (None, "back"):
+            return
+        if action == "search":
+            filters["query"] = ask_text("Recherche", filters["query"]).strip()
+        elif action == "category":
+            value = select("Catégorie", [{"label": "Toutes", "value": None, "desc": "retirer le filtre"}] + [{"label": x, "value": x, "desc": ""} for x in cyber_categories(tools)], default=filters["category"])
+            filters["category"] = value
+        elif action == "risk":
+            value = select("Niveau de risque", [{"label": "Tous", "value": None, "desc": "retirer le filtre"}, {"label": "Faible", "value": "low", "desc": "ressource généralement peu intrusive"}, {"label": "Moyen", "value": "medium", "desc": "vérifier le contexte et l’autorisation"}, {"label": "Élevé", "value": "high", "desc": "laboratoire ou autorisation explicite uniquement"}], default=filters["risk"])
+            filters["risk"] = value
+        elif action == "platform":
+            value = select("Plateforme", [{"label": "Toutes", "value": None, "desc": "retirer le filtre"}] + [{"label": x, "value": x, "desc": ""} for x in cyber_platforms(tools)], default=filters["platform"])
+            filters["platform"] = value
+        elif action == "reset":
+            filters = {"category": None, "risk": None, "platform": None, "query": ""}
+        elif action == "source":
+            webbrowser.open(repo)
+        elif action == "list":
+            results = search_tools(tools, **filters)
+            if not results:
+                con.print(f"[{Y}]Aucun outil ne correspond aux filtres.")
+                pause()
+                continue
+            items = [{"label": f"{tool['name']} · risque {risk_label(tool.get('risk_level', ''))}", "value": tool["name"], "desc": f"{tool.get('category', '—')} · {', '.join(tool.get('platforms', []))}"} for tool in results]
+            name = select(f"Résultats · {len(results)} outil(s)", items, echo=False, paged=True)
+            tool = next((x for x in results if x["name"] == name), None)
+            if not tool:
+                continue
+            favorite = tool["name"] in CFG.get("cyber_favs", [])
+            while True:
+                con.print(Panel(
+                    f"[bold]{escape(tool['description'])}[/]\n\n"
+                    f"Catégorie : {escape(str(tool.get('category', '—')))}\n"
+                    f"Risque : {risk_label(tool.get('risk_level', ''))}\n"
+                    f"Plateformes : {escape(', '.join(tool.get('platforms', [])))}\n"
+                    f"Langage : {escape(str(tool.get('language', '—')))}\n"
+                    f"Licence : {escape(str(tool.get('license', 'à vérifier')))}\n"
+                    f"Installation : {escape(str(tool.get('installation', 'à vérifier')))}\n"
+                    f"Accès réseau : {'oui' if tool.get('network_access') else 'non'} · privilèges root : {'oui' if tool.get('requires_root') else 'non'}\n"
+                    f"Source : {escape(str(tool.get('source_ref', '—')))}\n\n"
+                    f"URL : {escape(str(tool.get('source_url', '—')))}\n\n"
+                    "Les instructions sont informatives : CAT.EXE ne les exécute jamais automatiquement.",
+                    title=f"[bold #00e5ff]{escape(tool['name'])}[/]", border_style="#4a3fa0"))
+                detail = select("Action", [{"label": "↗ Ouvrir la source", "value": "open", "desc": tool.get("source_url", "")}, {"label": ("★ Retirer des favoris" if favorite else "☆ Ajouter aux favoris"), "value": "fav", "desc": "préférences locales uniquement"}, {"label": "↩ Retour aux résultats", "value": "back", "desc": ""}], echo=False)
+                if detail == "open":
+                    webbrowser.open(tool.get("source_url", repo))
+                elif detail == "fav":
+                    favs = CFG.setdefault("cyber_favs", [])
+                    if tool["name"] in favs:
+                        favs.remove(tool["name"])
+                        favorite = False
+                    else:
+                        favs.append(tool["name"])
+                        favorite = True
+                    save_cfg()
+                else:
+                    break
 
 
 SECTIONS = build_sections(len(LEARN_LANGS), DISCORD)

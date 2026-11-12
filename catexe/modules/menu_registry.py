@@ -75,6 +75,7 @@ def build_sections(learn_count: int = 23, discord: str = "https://discord.gg/RWY
     ]),
     ("CAT.EXE", [
         ("mod_diagnostics", "🧪 Diagnostic système", "Python · dépendances · outils", "Vérifie localement Python, les modules, Ollama, FFmpeg et Playwright sans envoyer de données."),
+        ("mod_cyber_catalog", "🛡️ Catalogue cyber", "outils · filtres · risques", "Catalogue local issu de hacking-ethique : recherche, catégories, plateformes, licences et niveaux de risque. Les commandes sont affichées mais jamais exécutées automatiquement."),
         ("mod_graph", "🧬 Graphe d'enquête", "façon Obsidian · fenêtre", "Une fenêtre à part qui dessine ton enquête en toile : pseudos, comptes, emails, IP, lieux… reliés entre eux.\n\nChaque module que tu lances l'alimente tout seul, en direct. Tu peux ajouter des éléments, les relier, mettre des notes, chercher, filtrer par type et exporter en image.\n\nInspiré d'Obsidian et Maltego."),
         ("mod_autoscan", "⚡ Scan auto", "façon SpiderFoot", "Donne une cible (pseudo, email, domaine, IP, nom…) : l'outil lance toutes les recherches possibles, puis recommence sur ce qu'il trouve, et remplit le graphe tout seul."),
         ("mod_report", "📄 Rapport", "PDF · HTML", "Tout ce que tu as trouvé pendant la session, avec synthèse IA, en PDF (lisible sur iPhone) ou en page web."),
