@@ -12,6 +12,8 @@ from .config import load_config
 from .core_utils import clean_path, haversine, parse_json, stamp
 from .diagnostics import collect_checks
 from .http_client import create_session
+from .modules.geolocation import GeoHypothesis, confidence_text, limitation_text, rank_hypotheses
+from .modules.ip_attribution import summarize_ip_sources
 from .modules.menu_registry import KEYW, build_sections
 from .modules.sources.results import SourceResult, result_from_probe, source_error
 from .modules.ui import UIContext, ask_num as ui_ask_num, ask_text as ui_ask_text, ask_yes as ui_ask_yes, read_key as ui_read_key, select as ui_select
@@ -6343,10 +6345,12 @@ def mod_img2gps():
         log("Ce fichier n'est pas une image lisible (JPG, PNG, HEIC, WebP…).", R)
         return pause()
     found = []
+    hypotheses = []
     if gps:
         lat, lon = gps[0], gps[1]
         con.print(Panel("[bold #00e5ff]GPS trouvé dans le fichier[/] : position exacte de l'appareil", border_style=G))
         con.print(coords_panel(lat, lon, "📌 Position exacte (EXIF)"))
+        hypotheses.append(GeoHypothesis(lat, lon, "GPS EXIF", source="exif"))
         found.append({"lat": lat, "lon": lon, "label": "<b>GPS EXIF</b><br>position exacte", "c": "#00e5ff", "s": 9})
         add_report("Image → coordonnées", f.name, f"GPS EXIF : {lat:.6f}, {lon:.6f}")
     else:
@@ -6363,6 +6367,7 @@ def mod_img2gps():
                 except Exception:
                     nm = "?"
                 rows.append((str(n), f"{a:.5f}, {b:.5f}", nm, f"{p * 100:.0f} %"))
+                hypotheses.append(GeoHypothesis(a, b, nm, probability=float(p), source="geoclip", radius_km=150))
                 found.append({"lat": a, "lon": b, "label": f"<b>GeoCLIP #{n}</b><br>{escape_html(nm)}<br>{p * 100:.0f} %", "c": "#b388ff"})
             t = Table(title="Positions les plus probables (GeoCLIP)", box=box.ROUNDED, border_style="#2b3158", header_style="bold #00e5ff")
             for c in ("#", "Coordonnées", "Lieu", "Proba"):
@@ -6382,10 +6387,14 @@ def mod_img2gps():
                 con.print(kv([("Lieu", f"{j.get('ville', '?')}, {j.get('pays', '?')}"), ("Confiance", f"{j.get('confiance', '?')} %"),
                               ("Indices", " · ".join(j.get("indices") or []))], f"🤖 IA de vision ({eng})", P))
                 con.print(coords_panel(a, b, "📌 Estimation de l'IA de vision"))
+                hypotheses.append(GeoHypothesis(a, b, str(j.get("ville") or j.get("pays") or "IA vision"), probability=float(j.get("confiance", 0)) / 100, source="vision", evidence=tuple(j.get("indices") or []), radius_km=150))
                 found.append({"lat": a, "lon": b, "label": f"<b>IA vision</b><br>{escape_html(str(j.get('ville', '')))}", "c": "#ffc861", "icon": "★", "s": 22})
                 add_report("Image → coordonnées", f.name, f"IA vision : {a:.5f}, {b:.5f} ({j.get('ville')}, {j.get('pays')})")
             except Exception as e:
                 log(f"IA de vision : {e}", Y)
+    if hypotheses:
+        best = rank_hypotheses(hypotheses)[0]
+        con.print(Panel(f"Source principale : {best.source}\nConfiance : {confidence_text(best)}\n{limitation_text(best)}", title="Interprétation prudente", border_style=Y if best.confidence != "high" else G))
     if found:
         if ask_yes("Ouvrir la carte ?", True):
             save_open("image_coords", quick_map(f"Image → coordonnées · {f.name}", found))
@@ -6450,6 +6459,7 @@ def mod_iplookup():
             list(ex.map(lambda kv_: job(*kv_), jobs.items()))
     w, a, s = res.get("who") or {}, res.get("api") or {}, res.get("sdb") or {}
     conn = w.get("connection") or {}
+    ip_summary = summarize_ip_sources(w, a)
     lat, lon = w.get("latitude") or a.get("lat"), w.get("longitude") or a.get("lon")
     flags = []
     if res.get("tor"):
@@ -6461,8 +6471,9 @@ def mod_iplookup():
     if a.get("mobile"):
         flags.append("[#7aa2ff]réseau mobile[/]")
     p1 = kv([("IP", f"{ip}  ({'IPv6' if ':' in ip else 'IPv4'})"), ("Reverse DNS", res.get("rdns") or a.get("reverse")),
-             ("Pays", f"{w.get('country') or a.get('country', '')} ({w.get('country_code') or a.get('countryCode', '')})"), ("Région", w.get("region") or a.get("regionName")),
-             ("Ville", f"{w.get('city') or a.get('city', '')} {w.get('postal') or a.get('zip') or ''}"), ("Coordonnées (approx.)", f"{lat}, {lon}" if lat else None),
+             ("Pays estimé", f"{ip_summary.country or ''} ({w.get('country_code') or a.get('countryCode', '')})"), ("Région", w.get("region") or a.get("regionName")),
+             ("Ville estimée", f"{ip_summary.city or ''} {w.get('postal') or a.get('zip') or ''}"), ("Précision", f"{ip_summary.precision} · accord {ip_summary.agreement}/{ip_summary.compared_sources} éléments"),
+             ("Coordonnées (approx.)", f"{lat}, {lon}" if lat else None),
              ("Fuseau", (w.get("timezone") or {}).get("id") or a.get("timezone")), ("Opérateur (ISP)", conn.get("isp") or a.get("isp")),
              ("Organisation", conn.get("org") or a.get("org")), ("ASN", f"AS{conn.get('asn')}" if conn.get("asn") else a.get("as")),
              ("Domaine opérateur", conn.get("domain")), ("Type", Text.from_markup(" · ".join(flags)) if flags else "connexion classique (box, entreprise…)"),
@@ -6480,7 +6491,7 @@ def mod_iplookup():
     view_pages(f"IP LOOKUP · {ip}", pages)
     add_report("IP lookup", ip, f"{w.get('country')} {w.get('city')} · {conn.get('isp') or a.get('isp')} · AS{conn.get('asn')} · ports {s.get('ports') if s else '?'}"
                + (" · TOR" if res.get("tor") else "") + (" · VPN/proxy" if a.get("proxy") else ""))
-    con.print(f"[{M}]⚠ La position d'une IP est celle de l'opérateur (ville ou pays), jamais l'adresse d'une personne.")
+    con.print(f"[{M}]⚠ {ip_summary.warning}")
     if lat and ask_yes("Ouvrir la carte ?"):
         save_open("ip", quick_map(f"IP {ip}", [{"lat": lat, "lon": lon, "label": f"<b>{ip}</b><br>{escape_html(str(conn.get('isp') or ''))}"}],
                                   circles=[{"lat": lat, "lon": lon, "r": 25000}]))
